@@ -23,7 +23,7 @@ from .config import (
     global_prompt_paths,
 )
 from .models import Issue
-from .tracking import get_comments_since, get_last_tracking_timestamp
+from .tracking import get_comments_since, get_handoff_timestamp
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +152,31 @@ def format_comment(comment: dict[str, Any]) -> list[str]:
     return [f"> {header}", ">"] + [f"> {line}" for line in body.splitlines()] + [""]
 
 
+EARLIER_COMMENTS_BUDGET = 6000  # characters
+
+
+def earlier_human_comments(comments: list[dict[str, Any]],
+                           budget: int = EARLIER_COMMENTS_BUDGET) -> list[dict[str, Any]]:
+    """The newest human comments from before this run, within a budget, oldest first.
+
+    Decisions made at an earlier gate (answers to open questions, scoping
+    calls) still bind every later stage, and the agent has no other way to
+    read the thread. Newest first under the budget, since later decisions
+    supersede earlier ones.
+    """
+    chosen: list[dict[str, Any]] = []
+    used = 0
+    for c in sorted(comments, key=lambda c: c.get("createdAt") or "", reverse=True):
+        size = len((c.get("body") or "").strip())
+        if not size:
+            continue
+        if used + size > budget:
+            break
+        chosen.append(c)
+        used += size
+    return list(reversed(chosen))
+
+
 def build_lifecycle_section(
     issue: Issue,
     state_name: str,
@@ -160,6 +185,7 @@ def build_lifecycle_section(
     run: int = 1,
     is_rework: bool = False,
     recent_comments: list[dict[str, Any]] | None = None,
+    earlier_comments: list[dict[str, Any]] | None = None,
     checks: ChecksConfig | None = None,
 ) -> str:
     """Generate the auto-injected lifecycle section.
@@ -216,7 +242,19 @@ def build_lifecycle_section(
     if not is_rework and recent_comments:
         lines.append("### Recent Activity")
         lines.append("")
+        lines.append("New since the last stage. A person's answers or decisions here "
+                     "override your own reading of the ticket.")
+        lines.append("")
         for comment in recent_comments:
+            lines.extend(format_comment(comment))
+
+    if earlier_comments:
+        lines.append("### Earlier comments on this ticket")
+        lines.append("")
+        lines.append("Decisions recorded at earlier gates still apply unless a newer "
+                     "comment changes them.")
+        lines.append("")
+        for comment in earlier_comments:
             lines.extend(format_comment(comment))
 
     # Available transitions
@@ -521,9 +559,13 @@ def assemble_prompt(
     # Layer 3: Lifecycle injection
     # Filter comments to recent non-tracking ones
     recent: list[dict[str, Any]] = []
+    earlier: list[dict[str, Any]] = []
     if comments:
-        last_ts = get_last_tracking_timestamp(comments)
-        recent = get_comments_since(comments, last_ts)
+        recent = get_comments_since(comments, get_handoff_timestamp(comments))
+        new_ids = {id(c) for c in recent}
+        earlier = earlier_human_comments(
+            [c for c in get_comments_since(comments, None) if id(c) not in new_ids]
+        )
 
     lifecycle = build_lifecycle_section(
         issue=issue,
@@ -533,6 +575,7 @@ def assemble_prompt(
         run=run,
         is_rework=is_rework,
         recent_comments=recent,
+        earlier_comments=earlier,
         checks=getattr(cfg, "checks", None),
     )
     parts.append(lifecycle)

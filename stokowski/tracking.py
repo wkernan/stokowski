@@ -172,6 +172,41 @@ def get_last_tracking_timestamp(comments: list[dict]) -> str | None:
     return latest_ts
 
 
+def get_handoff_timestamp(comments: list[dict]) -> str | None:
+    """When the issue last passed to a human or to the next agent.
+
+    Comments after this are new to the agent about to run. It is the latest
+    tracking comment *except* gate decisions and the state entry a decision
+    triggers: a person answers or reviews first and moves the ticket second,
+    so Stokowski's own approved/rework comment, and the "Entering state" that
+    follows it, always land after what they wrote. Windowing from those
+    dropped the very comment the decision was about.
+    """
+    latest_ts: str | None = None
+    after_decision = False
+    for comment in _oldest_first(comments):
+        body = comment.get("body", "")
+        for pattern, kind in ((STATE_PATTERN, "state"), (GATE_PATTERN, "gate")):
+            match = pattern.search(body)
+            if not match:
+                continue
+            try:
+                data = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+            ts = data.get("timestamp")
+            if kind == "gate" and data.get("status") in ("approved", "rework", "escalated"):
+                after_decision = True
+                continue
+            if kind == "state" and after_decision:
+                after_decision = False
+                continue
+            after_decision = False
+            if ts:
+                latest_ts = ts
+    return latest_ts
+
+
 def find_latest_gate_rework_timestamp(comments: list[dict]) -> str | None:
     """When the most recent rework cycle began, or None if never reworked.
 

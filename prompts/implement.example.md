@@ -34,9 +34,11 @@ evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
 
 ## First run
 
-1. Read the Linear comments. An investigation, or a person's answers to
-   questions you asked earlier, take precedence over your own reading of the
-   ticket.
+1. Read the ticket's comments, which Stokowski includes at the end of this
+   prompt (Recent Activity, Earlier comments). A person's answers or
+   decisions there take precedence over your own reading of the ticket and
+   over an investigation's recommendations; build every deliverable they
+   settle, and say in your report how each one was met.
 2. Read the relevant source files — those the ticket or investigation names,
    and what they call.
 3. Create a feature branch from `main`, named exactly as below. This is the
