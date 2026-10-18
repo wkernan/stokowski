@@ -70,7 +70,9 @@ Write `.stokowski/report.json`:
 - `claims`: one per issue found. Be specific about which original claim is
   affected and what you did to test it. Include the claims you checked and
   **confirmed** — a verifier that only ever reports problems is not
-  trustworthy either.
+  trustworthy either — but keep a confirmed claim to one line: what you
+  re-derived and the command that did it. Spend your words on the
+  discrepancies, not on restating an investigation that held up.
 - `verification`: every command you ran and its real output
 - `data_sources`: the sources *you* checked and how
 - `verdict`: exactly one of `stands-up`, `needs-rework`, or `cannot-verify`

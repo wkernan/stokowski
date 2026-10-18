@@ -417,6 +417,76 @@ def render(
     return "\n".join(out)
 
 
+def _truncate_words(text: str, limit: int) -> str:
+    words = text.split()
+    if limit <= 0 or len(words) <= limit:
+        return text
+    return " ".join(words[:limit]) + " …"
+
+
+def render_summary(
+    report: dict[str, Any],
+    *,
+    state: str,
+    run: int,
+    detail_url: str,
+    uploaded: dict[str, str] | None = None,
+    usage: dict[str, Any] | None = None,
+    summary_words: int = 120,
+) -> str:
+    """The compact Linear comment: what a gate reviewer decides on, nothing else.
+
+    Everything here is chosen for the decision — approve, rework, or unblock.
+    The full report rendered by `render()` (findings, data sources,
+    verification, assumptions) is attached as a file and linked; the trust
+    signal in the recommendation block still counts unsourced claims, so thin
+    work is visible without opening it. Images stay inline because a
+    before/after pair is the fastest review there is.
+    """
+    uploaded = uploaded or {}
+    out: list[str] = [REPORT_MARKER, ""]
+
+    headline = _text(report.get("headline"))
+    out.append(f"## {state}" + (f" — {headline}" if headline else ""))
+    out.append("")
+
+    recommendation = _render_recommendation(report)
+    out.extend(recommendation)
+
+    summary = _text(report.get("summary"))
+    if summary and not recommendation:
+        out.append(_truncate_words(summary, summary_words))
+        out.append("")
+
+    out.extend(_bullets("Open questions", _as_list(report.get("open_questions"))))
+    out.extend(_bullets("Risks", _as_list(report.get("risks"))))
+
+    images = {name: url for name, url in uploaded.items() if _looks_like_image(name)}
+    if images:
+        out.append("### Evidence")
+        out.append("")
+        out.extend(_render_artifacts(
+            [a for a in _as_list(report.get("artifacts"))
+             if isinstance(a, dict) and _text(a.get("file")) in images],
+            images,
+        ))
+
+    preview = _text(report.get("preview_url"))
+    if preview:
+        out.append(f"**Preview:** {preview}")
+        out.append("")
+
+    others = len(uploaded) - len(images)
+    extra = f", and {others} other evidence file{'s' if others != 1 else ''}" if others > 0 else ""
+    out.append(
+        f"📄 **[Full report]({detail_url})** — findings, data sources, verification "
+        f"and assumptions{extra}."
+    )
+    out.append("")
+    out.extend(_render_footer(state, run, usage, uploaded))
+    return "\n".join(out)
+
+
 def _render_footer(
     state: str, run: int, usage: dict[str, Any] | None, uploaded: dict[str, str]
 ) -> list[str]:

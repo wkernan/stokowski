@@ -42,7 +42,7 @@ states:
     prompt: prompts/ground-check.example.md
     linear_state: active
     model: claude-opus-5
-    effort: xhigh
+    effort: high              # verification, not open-ended reasoning: xhigh spent its time thinking, not checking
     session: fresh
     transitions:
       complete: findings-review

@@ -180,6 +180,24 @@ class ServerConfig:
 
 
 @dataclass
+class ReportingConfig:
+    """How a stage's report reaches Linear.
+
+    `attach` (default): the Linear comment carries only what a gate reviewer
+    decides on — the verdict, its reasons, next steps, risks and open
+    questions — and the full report (findings, data sources, verification,
+    assumptions) is uploaded as a markdown file linked from it. A pilot ticket
+    produced 10,000 words of comments for a one-string change; the decision
+    needed a few hundred.
+
+    `inline`: the previous behaviour, everything in the comment.
+    """
+    detail: str = "attach"
+    # Words of the agent's prose `summary` kept in the compact comment.
+    summary_words: int = 120
+
+
+@dataclass
 class LinearStatesConfig:
     """Maps logical state names to actual Linear state names."""
     todo: str = "Todo"
@@ -383,6 +401,7 @@ class ServiceConfig:
     github: GitHubConfig = field(default_factory=GitHubConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    reporting: ReportingConfig = field(default_factory=ReportingConfig)
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     states: dict[str, StateConfig] = field(default_factory=dict)
@@ -877,6 +896,12 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     )
     s = config_raw.get("server", {}) or {}
     server = ServerConfig(port=s.get("port"), host=s.get("host"))
+    rp = config_raw.get("reporting", {}) or {}
+    detail = str(rp.get("detail", "attach") or "attach").strip().lower()
+    reporting = ReportingConfig(
+        detail=detail if detail in ("attach", "inline") else "attach",
+        summary_words=_coerce_int(rp.get("summary_words"), 120),
+    )
 
     # Resolve projects list (multi-project) or synthesize from top-level (legacy)
     projects_raw = config_raw.get("projects")
@@ -940,6 +965,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         github=p0.github,
         agent=agent,
         server=server,
+        reporting=reporting,
         linear_states=p0.linear_states,
         prompts=p0.prompts,
         states=p0.states,

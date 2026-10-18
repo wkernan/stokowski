@@ -70,6 +70,19 @@ def test_gates_before_the_pr_exists_are_not_watched_by_the_review_loop(project, 
     assert states["merge-review"].requires_pr is True
 
 
+def test_grounding_checks_run_at_high_not_xhigh_effort(project):
+    """Verification is checking, not open-ended reasoning.
+
+    On the pilot ticket the xhigh grounding check spent 2% of its time running
+    commands and the rest generating; its value came from re-running the
+    investigation's numbers, which high effort does as well.
+    """
+    for name, wf in project.workflows.items():
+        gc = wf.states.get("ground-check")
+        if gc is not None:
+            assert gc.effort == "high", f"{name}: ground-check effort is {gc.effort}"
+
+
 def test_the_review_stage_prompt_never_merges():
     text = (REPO / "prompts" / "address-review-comments.example.md").read_text().lower()
     assert "never merge" in text or "never force-push" in text

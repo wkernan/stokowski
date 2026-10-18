@@ -8,6 +8,19 @@ All notable changes to Stokowski are documented here.
 
 ### Changed
 
+- **Compact stage reports.** The Linear comment now carries only what a gate
+  reviewer decides on — verdict, reasons, next steps, risks, open questions,
+  inline images, and the trust signal that counts unsourced claims. The full
+  report (findings, data sources, verification, assumptions) is uploaded as a
+  markdown file and linked. If the upload fails, the full report is posted
+  inline as before. `reporting: {detail: inline}` restores the old comment.
+  The reporting contract asks for proportionate reports (`summary` under 150
+  words, only the claims a decision turns on), and the grounding check keeps
+  confirmed claims to one line. A pilot ticket's two reports came to 10,000
+  words for a one-string change.
+- **Grounding checks run at `high` effort, not `xhigh`.** On the pilot it
+  spent 2% of its time running commands; the rest was generation.
+
 - **The shipped pipelines no longer run an agent `merge` stage.** `merge-review`
   approves straight to `done`: the human merges the PR (which the review loop
   detects), or moves the ticket to Gate Approved to close it without touching
