@@ -87,13 +87,24 @@ states:
     transitions:
       complete: merge-review
 
+  # The PR is the gate: merging ends the ticket, a human review comment sends
+  # it to address-review-comments (see feature.example.yaml).
   merge-review:
     type: gate
     linear_state: review
-    rework_to: implement
-    max_rework: 5
+    rework_to: address-review-comments
     transitions:
       approve: merge
+
+  address-review-comments:
+    type: agent
+    prompt: prompts/address-review-comments.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: merge-review
 
   merge:
     type: agent

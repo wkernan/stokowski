@@ -211,6 +211,29 @@ server:
   port: 4200
 
 # ---------------------------------------------------------------------------
+# GitHub review loop (optional) — the pull request is the gate
+# ---------------------------------------------------------------------------
+# While an issue is parked at a review gate, Stokowski watches its PR. A
+# human review comment moves the ticket to the rework state (then the gate's
+# `rework_to` stage runs, e.g. address-review-comments); merging the PR ends
+# the ticket; closing it unmerged cancels it (linear_states.canceled). CI and
+# merge conflicts are shown as a chip on the dashboard and never trigger
+# anything — comment "@<bot> fix CI" to ask for a fix.
+#
+# Use a dedicated account with Write but no admin rights, so the agent cannot
+# merge its own work. The token resolves like the Linear key ($ENV or literal).
+# Per project, `github:` can be overridden (different repo per project).
+github:
+  enabled: false
+  repo: "your-org/your-repo"
+  token: "$GITHUB_TOKEN"
+  poll_interval_ms: 120000        # polling, no webhooks needed
+  # bot_login: stokowski-bot      # learned from the token when omitted
+  # ignore_authors: [some-bot]    # extra logins whose comments never count
+  # require_mention: false        # true: only "@<bot> ..." comments trigger
+  # acknowledge: true             # react 👀 to the comment that triggered rework
+
+# ---------------------------------------------------------------------------
 # Routing — which workflow runs for which ticket
 # ---------------------------------------------------------------------------
 #

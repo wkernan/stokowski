@@ -8,6 +8,21 @@ All notable changes to Stokowski are documented here.
 
 ### Added
 
+- **GitHub review loop: the PR is the gate.** With `github.enabled`, a
+  poller watches the PR of every issue parked at a review gate (resolved by
+  Linear's branch name, or an open PR whose head starts with the issue
+  identifier). A human comment on any of the three surfaces — conversation,
+  inline, review — moves the ticket to the rework state; the existing gate
+  handling then dispatches the gate's `rework_to` stage, so a manual move and
+  a poller move share one path. The daemon's own comments, `[bot]` logins,
+  approvals and "no findings" bodies never trigger; an `@<bot>` mention
+  always does. A merged PR ends the ticket, a PR closed without merging
+  cancels it (`linear_states.canceled`). CI and merge conflicts are shown as
+  a PR chip on the dashboard and never trigger rework. On first sight of a
+  PR the poller only reads comments newer than the last rework, so a
+  restart cannot replay handled feedback. New `address-review-comments`
+  stage and prompt; `merge-review` in the feature and bug-fix workflows
+  reworks to it. Gates can opt out with `requires_pr: false`.
 - **Intake by team + labels.** `tracker` accepts `team` and `labels` as an
   alternative (or addition) to `project_slug`: a ticket is picked up only when
   it is in the team and carries every intake label. One label per target repo

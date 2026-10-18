@@ -188,7 +188,39 @@ class LinearStatesConfig:
     review: str = "Human Review"
     gate_approved: str = "Gate Approved"
     rework: str = "Rework"
+    # Where a ticket goes when its PR is closed without merging: a human
+    # said "not this", which is distinct from Done.
+    canceled: str = "Canceled"
     terminal: list[str] = field(default_factory=lambda: ["Done", "Closed", "Cancelled"])
+
+
+@dataclass
+class GitHubConfig:
+    """The review loop: watch the PR of every issue parked at a review gate.
+
+    Off by default. `repo` is `owner/name`; `token` is read like the Linear
+    key (`$ENV_NAME` or a literal). The token should belong to a dedicated
+    account with no merge rights, so the agent cannot land its own work.
+    """
+    enabled: bool = False
+    repo: str = ""
+    token: str = "$GITHUB_TOKEN"
+    api_base: str = "https://api.github.com"
+    poll_interval_ms: int = 120_000
+    # The daemon's own login; learned from the token when empty. Its comments
+    # never trigger rework, and `@<login>` in a human comment always does.
+    bot_login: str = ""
+    ignore_authors: list[str] = field(default_factory=list)
+    noop_patterns: list[str] = field(default_factory=list)
+    # When true, only a comment that @mentions the bot triggers rework.
+    require_mention: bool = False
+    # React with 👀 on the comment that triggered a rework (best effort).
+    acknowledge: bool = True
+
+    def resolved_token(self) -> str:
+        if self.token.startswith("$"):
+            return os.environ.get(self.token[1:], "")
+        return self.token
 
 
 @dataclass
@@ -216,6 +248,10 @@ class StateConfig:
     allowed_tools: list[str] | None = None
     rework_to: str | None = None     # gate only
     max_rework: int | None = None    # gate only
+    # Gate only: whether a PR is expected while parked here. The GitHub
+    # review loop watches only gates that expect one; an exploration's
+    # findings gate has nothing to watch and must not be reported as missing.
+    requires_pr: bool = True
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
 
@@ -241,6 +277,7 @@ class ProjectConfig:
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
     workflow_dir: Path = field(default_factory=lambda: Path("."))
     # Per-project cap (overrides AgentConfig.max_concurrent_per_project[name]).
     max_concurrent: int | None = None
@@ -517,6 +554,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         allowed_tools=_coerce_list(allowed) if allowed is not None else None,
         rework_to=raw.get("rework_to"),
         max_rework=raw.get("max_rework"),
+        requires_pr=bool(raw.get("requires_pr", True)),
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
     )
@@ -600,7 +638,24 @@ def _parse_linear_states(raw: dict[str, Any]) -> LinearStatesConfig:
         review=str(raw.get("review", "Human Review")),
         gate_approved=str(raw.get("gate_approved", "Gate Approved")),
         rework=str(raw.get("rework", "Rework")),
+        canceled=str(raw.get("canceled", "Canceled")),
         terminal=_coerce_list(raw.get("terminal")) or ["Done", "Closed", "Cancelled"],
+    )
+
+
+def _parse_github(raw: dict[str, Any] | None) -> GitHubConfig:
+    raw = raw or {}
+    return GitHubConfig(
+        enabled=bool(raw.get("enabled", False)),
+        repo=str(raw.get("repo", "") or "").strip(),
+        token=str(raw.get("token", "$GITHUB_TOKEN") or "$GITHUB_TOKEN"),
+        api_base=str(raw.get("api_base", "https://api.github.com")),
+        poll_interval_ms=_coerce_int(raw.get("poll_interval_ms"), 120_000),
+        bot_login=str(raw.get("bot_login", "") or "").strip(),
+        ignore_authors=_coerce_list(raw.get("ignore_authors")),
+        noop_patterns=_coerce_list(raw.get("noop_patterns")),
+        require_mention=bool(raw.get("require_mention", False)),
+        acknowledge=bool(raw.get("acknowledge", True)),
     )
 
 
@@ -734,6 +789,7 @@ def _build_project(
 
     linear_states_raw = _merge_dict(defaults.get("linear_states"), raw.get("linear_states"))
     claude_raw = _merge_dict(defaults.get("claude"), raw.get("claude"))
+    github_raw = _merge_dict(defaults.get("github"), raw.get("github"))
 
     workflows, routing = _resolve_workflows(
         workflow_dir,
@@ -754,6 +810,7 @@ def _build_project(
         routing=routing,
         linear_states=_parse_linear_states(linear_states_raw),
         claude=_parse_claude(claude_raw),
+        github=_parse_github(github_raw),
         workflow_dir=workflow_dir,
         max_concurrent=raw.get("max_concurrent"),
     )
@@ -838,6 +895,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "linear_states": config_raw.get("linear_states") or {},
             "claude": config_raw.get("claude") or {},
             "routing": config_raw.get("routing") or {},
+            "github": config_raw.get("github") or {},
         }
         seen_names: set[str] = set()
         for idx, raw in enumerate(projects_raw):
@@ -862,6 +920,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "linear_states": config_raw.get("linear_states") or {},
             "claude": config_raw.get("claude") or {},
             "routing": config_raw.get("routing") or {},
+            "github": config_raw.get("github") or {},
         }
         name = _legacy_project_name(tracker_raw, path)
         projects.append(_build_project(name, synthetic_raw, {}, workflow_dir))
@@ -921,6 +980,13 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
             )
     if t.skip_label and t.skip_label.lower() in {l.lower() for l in t.labels}:
         errors.append(f"{prefix}: skip_label '{t.skip_label}' is also an intake label")
+
+    gh = project.github
+    if gh.enabled:
+        if not re.fullmatch(r"[\w.-]+/[\w.-]+", gh.repo or ""):
+            errors.append(f"{prefix}: github.repo must be 'owner/name', got '{gh.repo}'")
+        if not gh.resolved_token():
+            errors.append(f"{prefix}: github.enabled but no token (set {gh.token} or github.token)")
 
     for gp in global_prompt_paths(getattr(project.prompts, "global_prompt", None)):
         if not _prompt_exists(project.workflow_dir, gp):

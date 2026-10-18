@@ -1246,6 +1246,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         tokens: { total_tokens: 0 },
         last_message: 'Awaiting human review',
         session_id: null,
+        pr: g.pr || null,
       })),
     ].filter(projectMatches);
 
@@ -1258,6 +1259,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="empty-sub">Move a Linear issue to Todo or In Progress to start</div>
         </div>`;
       return;
+    }
+
+    // The PR chip is the review loop's whole status in one glance: the PR
+    // number, CI (red = failing, amber = pending/unreadable), and whether the
+    // branch conflicts with main. None of these move a ticket by themselves.
+    function prChipHtml(pr) {
+      if (!pr) return '';
+      if (pr.unresolved_branch && !pr.number) {
+        return `<span class="pr-chip pr-none" title="parked at a review gate but no PR found">⚠ no PR on ${esc(pr.unresolved_branch)}</span>`;
+      }
+      const ci = pr.ci || 'unknown';
+      const ciCls = ci === 'passing' ? 'ci-ok' : ci === 'failing' ? 'ci-bad' : 'ci-warn';
+      const conflict = pr.conflict === 'conflicting' ? ` <span class="pr-conflict" title="branch conflicts with main">conflict</span>` : '';
+      const state = pr.state === 'merged' ? ' merged' : pr.state === 'closed' ? ' closed' : '';
+      const onclick = pr.url ? `onclick="event.stopPropagation();window.open('${esc(pr.url)}','_blank')"` : '';
+      return `<span class="pr-chip ${ciCls}" ${onclick} title="CI ${esc(ci)}${pr.last_trigger ? ' · last rework from ' + esc((pr.last_trigger.authors||[]).join(', ')) : ''}">PR #${pr.number}${state}${conflict}</span>`;
     }
 
     const rows = all.map(r => {
@@ -1275,6 +1292,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       if (r.artifact_count) toolBits.push(`${r.artifact_count} artifacts`);
       const sub = toolBits.length ? `<div class="agent-sub">${toolBits.join(' \u00b7 ')}</div>` : '';
       const cost = r.cost_usd ? `<div class="agent-cost">$${r.cost_usd.toFixed(2)}</div>` : '';
+      const prChip = prChipHtml(r.pr);
 
       return `
       <div class="agent-card ${open ? 'expanded' : ''}" onclick="window.__toggleAgent('${esc(key)}')">
@@ -1284,7 +1302,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
         <div>
           <div class="agent-status-row">
-            ${statusPill(r.status)}${stateInfo}
+            ${statusPill(r.status)}${stateInfo}${prChip}
           </div>
           <div class="agent-activity">
             <span class="agent-msg">${esc(r.last_message || '\u2014')}</span>
@@ -1706,7 +1724,7 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
   function renderStages(d) {
     document.getElementById('stages').innerHTML = d.states.map(s => {
       const applicable = Object.entries(d.state_fields).filter(([k]) => {
-        if (s.type === 'gate') return ['rework_to', 'max_rework'].includes(k);
+        if (s.type === 'gate') return ['rework_to', 'max_rework', 'requires_pr'].includes(k);
         if (s.type === 'terminal') return false;
         return !['rework_to', 'max_rework'].includes(k);
       });

@@ -707,6 +707,18 @@ Each state can override these fields from the root `claude` / `hooks` defaults. 
 
 ---
 
+## GitHub review loop
+
+Optional. With `github.enabled`, the pull request is the gate: a human review
+comment sends the ticket back to the `address-review-comments` stage, merging
+the PR ends the ticket, and closing it unmerged cancels it. CI and conflicts
+are shown on the dashboard and never trigger anything. Intake can also be
+scoped by Linear **team + labels** (one label per repo) instead of a project.
+See [docs/review-loop.md](docs/review-loop.md) and the `github:` and
+`tracker:` blocks in `workflow.example.yaml`.
+
+---
+
 ## Prompt template variables
 
 Agent prompts are assembled from three layers, each rendered as a [Jinja2](https://jinja.palletsprojects.com/) template:

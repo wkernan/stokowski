@@ -74,13 +74,25 @@ states:
     transitions:
       complete: merge-review
 
+  # The PR is the gate. With `github.enabled`, merging the PR ends the ticket
+  # and a human review comment sends it to address-review-comments; moving the
+  # Linear ticket by hand still works and takes the same path.
   merge-review:
     type: gate
     linear_state: review
-    rework_to: implement
-    max_rework: 5
+    rework_to: address-review-comments
     transitions:
       approve: merge
+
+  address-review-comments:
+    type: agent
+    prompt: prompts/address-review-comments.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: merge-review
 
   merge:
     type: agent

@@ -77,6 +77,7 @@ query($filter: IssueFilter!, $after: String) {
     nodes {
       id
       identifier
+      branchName
       state { name }
       labels { nodes { name } }
     }
@@ -358,6 +359,7 @@ class LinearClient:
                         identifier=node.get("identifier", ""),
                         title="",
                         state=(node.get("state") or {}).get("name", ""),
+                        branch_name=node.get("branchName"),
                         labels=[
                             label["name"].lower()
                             for label in (node.get("labels") or {}).get("nodes", [])

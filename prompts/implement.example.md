@@ -22,9 +22,11 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
 
 1. Read the investigation summary from the Linear comments.
 2. Read the relevant source files identified in the investigation.
-3. Create a feature branch from `main`:
+3. Create a feature branch from `main`, named exactly as below. This is the
+   branch name Linear suggests for the ticket, so Linear links the PR to the
+   issue and the review loop can find it:
    ```
-   git checkout -b {{ issue.identifier | lower }}-<short-description>
+   git checkout -b {{ issue_branch or (issue.identifier | lower) ~ '-<short-description>' }}
    ```
 4. Implement the changes with clean, logical commits.
 5. Run the project's real quality suite — the exact commands it documents,

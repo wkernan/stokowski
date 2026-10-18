@@ -143,6 +143,28 @@ def get_last_tracking_timestamp(comments: list[dict]) -> str | None:
     return latest_ts
 
 
+def find_latest_gate_rework_timestamp(comments: list[dict]) -> str | None:
+    """When the most recent rework cycle began, or None if never reworked.
+
+    The GitHub poller uses this as its floor on first sight of a PR: every
+    comment at or before it was handled by that cycle, everything after it is
+    unaddressed feedback. Keyed off the rework marker, not the gate-entry one,
+    so feedback left before the ticket first parked still counts.
+    """
+    latest: str | None = None
+    for comment in _oldest_first(comments):
+        match = GATE_PATTERN.search(comment.get("body", ""))
+        if not match:
+            continue
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if data.get("status") == "rework" and data.get("timestamp"):
+            latest = data["timestamp"]
+    return latest
+
+
 def get_comments_since(
     comments: list[dict], since_timestamp: str | None
 ) -> list[dict]:

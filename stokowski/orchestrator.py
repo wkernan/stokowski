@@ -34,6 +34,7 @@ from .tracking import make_gate_comment, make_state_comment, parse_latest_tracki
 from . import artifacts as artifacts_mod
 from . import report as report_mod
 from .events import summarise_tool_input
+from .github import CommentRef, GitHubClient, GitHubPoller, PRState, summarise_feedback
 from .ledger import Ledger
 from .workspace import ensure_workspace, remove_workspace
 
@@ -104,6 +105,9 @@ class Orchestrator:
         self._running = False
         self._last_issues: dict[str, Issue] = {}
         self._last_completed_at: dict[str, datetime] = {}  # issue_id -> last worker completion time
+        # The GitHub review loop, when `github.enabled`. Built in start().
+        self._github: GitHubClient | None = None
+        self._github_poller: GitHubPoller | None = None
 
         # State machine tracking
         self._issue_current_state: dict[str, str] = {}
@@ -331,6 +335,8 @@ class Orchestrator:
         # after restart, not only after Stokowski dispatches in-flight tickets
         await self._rebuild_gates_from_linear()
 
+        self._start_github_poller()
+
         # Main poll loop
         while self._running:
             try:
@@ -375,6 +381,139 @@ class Orchestrator:
 
         if self._linear:
             await self._linear.close()
+        if self._github:
+            await self._github.close()
+
+    # ── GitHub review loop ───────────────────────────────────────────────────
+
+    def _start_github_poller(self) -> None:
+        gh = self.cfg.github
+        if not gh.enabled:
+            return
+        token = gh.resolved_token()
+        if not token or not gh.repo:
+            logger.warning("github.enabled but repo/token missing; review loop not started")
+            return
+        self._github = GitHubClient(token, api_base=gh.api_base)
+        self._github_poller = GitHubPoller(
+            self._github, gh,
+            gates=self._review_gate_issues,
+            rework_floor=self._github_rework_floor,
+            on_rework=self._github_on_rework,
+            on_merged=self._github_on_merged,
+            on_closed=self._github_on_closed,
+        )
+        self._tasks["__github_poller__"] = asyncio.create_task(
+            self._github_poller.run(self._stop_event)
+        )
+        logger.info(
+            f"GitHub review loop watching {gh.repo} every {gh.poll_interval_ms // 1000}s "
+            f"(project={self.project_name})"
+        )
+
+    def _review_gate_issues(self) -> list[tuple[Issue, str]]:
+        """Issues parked at a gate whose Linear state is the review state."""
+        out: list[tuple[Issue, str]] = []
+        for issue_id, gate_name in self._pending_gates.items():
+            issue = self._last_issues.get(issue_id)
+            if issue is None or not issue.identifier:
+                continue
+            gate_cfg = self._states_for(issue).get(gate_name)
+            if (gate_cfg and gate_cfg.type == "gate" and gate_cfg.linear_state == "review"
+                    and gate_cfg.requires_pr):
+                out.append((issue, gate_name))
+        return out
+
+    async def _github_rework_floor(self, issue: Issue) -> str | None:
+        try:
+            comments = await self._ensure_linear_client().fetch_comments(issue.id)
+        except Exception as e:
+            logger.warning(f"Could not read comments for rework floor {issue.identifier}: {e}")
+            return None
+        return find_latest_gate_rework_timestamp(comments)
+
+    async def _github_on_rework(self, issue: Issue, pr: PRState, refs: list[CommentRef]) -> None:
+        """Human feedback on the PR: move the ticket to rework, nothing else.
+
+        `_handle_gate_responses` sees the rework state on the next tick and
+        dispatches the gate's `rework_to` stage — the same path a manual
+        ticket move takes.
+        """
+        client = self._ensure_linear_client()
+        await client.post_comment(issue.id, summarise_feedback(refs, pr))
+        moved = await client.update_issue_state(issue.id, self.cfg.linear_states.rework)
+        if not moved:
+            logger.error(
+                f"Review feedback on PR #{pr.number} but could not move {issue.identifier} to rework",
+                extra={"linked_to": issue.identifier},
+            )
+            return
+        logger.info(
+            f"Review feedback on PR #{pr.number} from {', '.join(sorted({r.author for r in refs}))} "
+            f"→ {issue.identifier} to {self.cfg.linear_states.rework}",
+            extra={"linked_to": issue.identifier},
+        )
+        if self.cfg.github.acknowledge and self._github is not None:
+            for ref in refs:
+                if ref.surface == "review":
+                    continue  # reviews have no reaction endpoint
+                try:
+                    await self._github.react(self.cfg.github.repo, ref.id.split(":", 1)[1], ref.surface)
+                except Exception:
+                    pass
+
+    async def _github_on_merged(self, issue: Issue, pr: PRState) -> None:
+        """A merged PR is the approval: the ticket is done, nothing more runs."""
+        gate = self._pending_gates.get(issue.id, "")
+        run = self._issue_state_runs.get(issue.id, 1)
+        self.ledger.record_gate(
+            workflow=self._workflow_name_for(issue), project=self.project_name or "",
+            issue_id=issue.id, issue=issue.identifier, gate=gate, verdict="merged", run=run,
+        )
+        await self._ensure_linear_client().post_comment(
+            issue.id, f"**[Stokowski]** [PR #{pr.number}]({pr.url}) merged — gate **{gate}** passed.",
+        )
+        terminal = self.cfg.terminal_linear_states()[0] if self.cfg.terminal_linear_states() else "Done"
+        await self._finish_issue(issue, terminal, reason=f"PR #{pr.number} merged")
+
+    async def _github_on_closed(self, issue: Issue, pr: PRState) -> None:
+        """Closed without merging is a deliberate "not this" from a human."""
+        gate = self._pending_gates.get(issue.id, "")
+        run = self._issue_state_runs.get(issue.id, 1)
+        self.ledger.record_gate(
+            workflow=self._workflow_name_for(issue), project=self.project_name or "",
+            issue_id=issue.id, issue=issue.identifier, gate=gate, verdict="closed", run=run,
+        )
+        await self._ensure_linear_client().post_comment(
+            issue.id, f"**[Stokowski]** [PR #{pr.number}]({pr.url}) was closed without merging — cancelling.",
+        )
+        await self._finish_issue(issue, self.cfg.linear_states.canceled, reason=f"PR #{pr.number} closed")
+
+    async def _finish_issue(self, issue: Issue, linear_state: str, reason: str) -> None:
+        """End an issue from outside the state machine: move it, clean up, forget it."""
+        client = self._ensure_linear_client()
+        try:
+            moved = await client.update_issue_state(issue.id, linear_state)
+            if not moved:
+                logger.warning(f"Could not move {issue.identifier} to '{linear_state}' ({reason})",
+                               extra={"linked_to": issue.identifier})
+        except Exception as e:
+            logger.warning(f"Could not move {issue.identifier} to '{linear_state}': {e}",
+                           extra={"linked_to": issue.identifier})
+        try:
+            await remove_workspace(self.cfg.workspace.resolved_root(), issue.identifier, self.cfg.hooks)
+        except Exception as e:
+            logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}",
+                           extra={"linked_to": issue.identifier})
+        self._pending_gates.pop(issue.id, None)
+        self._issue_current_state.pop(issue.id, None)
+        self._issue_state_runs.pop(issue.id, None)
+        self._announced_states = {k for k in self._announced_states if k[0] != issue.id}
+        self._last_session_ids.pop(issue.id, None)
+        self.claimed.discard(issue.id)
+        self.completed.add(issue.id)
+        logger.info(f"Finished {issue.identifier} → {linear_state} ({reason})",
+                    extra={"linked_to": issue.identifier})
 
     async def _startup_cleanup(self):
         """Remove workspaces for issues already in terminal states."""
@@ -1860,6 +1999,7 @@ class Orchestrator:
         # added on top — otherwise the dashboard reads zero cost for the whole
         # of a long run and only jumps at the end.
         live = self.running.values()
+        pr_info = self._github_poller.snapshot() if self._github_poller is not None else {}
         live_input = sum(r.input_tokens for r in live)
         live_output = sum(r.output_tokens for r in live)
         live_cache_creation = sum(r.cache_creation_tokens for r in live)
@@ -1932,9 +2072,22 @@ class Orchestrator:
                     "issue_identifier": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).identifier,
                     "gate_state": gate_state,
                     "run": self._issue_state_runs.get(issue_id, 1),
+                    "pr": pr_info.get(issue_id),
                 }
                 for issue_id, gate_state in self._pending_gates.items()
             ],
+            "github": (
+                {
+                    "enabled": True,
+                    "repo": self.cfg.github.repo,
+                    "bot_login": self._github_poller.self_login,
+                    "ci_degraded": self._github_poller.ci_degraded,
+                    "last_tick_at": self._github_poller.last_tick_at,
+                    "last_error": self._github_poller.last_error,
+                }
+                if self._github_poller is not None
+                else {"enabled": False}
+            ),
             "queued": [
                 {**q, "project_name": project_name} for q in self._queued
             ],

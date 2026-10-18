@@ -616,6 +616,14 @@ async def dry_run(workflow_path: str):
         console.print(f"  Tracker: {project.tracker.kind}  {project.tracker.scope_description()}{cap_str}")
         if project.tracker.skip_label:
             console.print(f"  Opt-out label: {project.tracker.skip_label}")
+        gh = project.github
+        if gh.enabled:
+            console.print(
+                f"  GitHub review loop: {gh.repo} every {gh.poll_interval_ms // 1000}s"
+                f"{'  (token missing!)' if not gh.resolved_token() else ''}"
+            )
+        else:
+            console.print("  GitHub review loop: off")
         console.print(f"  Claude model: {project.claude.model or 'default'}  permission={project.claude.permission_mode}")
         console.print(f"  Workspace root: {project.workspace.resolved_root()}")
         if project.paused:

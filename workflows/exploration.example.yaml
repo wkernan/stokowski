@@ -52,6 +52,7 @@ states:
     linear_state: review
     rework_to: investigate
     max_rework: 3
+    requires_pr: false        # no PR to watch: the GitHub review loop skips this gate
     transitions:
       approve: done
 
