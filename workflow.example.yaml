@@ -363,27 +363,30 @@ states:
     transitions:
       complete: merge-review
 
-  # ── 8. Merge Review (gate) ──────────────────────────────────────────────
-  # Human reviews the code review findings and decides to merge or rework.
-  # Rework goes back to implement (not code-review).
+  # ── 7. Merge Review (gate) ──────────────────────────────────────────────
+  # The PR is the gate and the human merges it; no agent runs `gh pr merge`.
+  # A review comment on the PR (with `github:` enabled) or a move to Rework
+  # sends the ticket to address-review-comments. Merging the PR, or moving
+  # the ticket to Gate Approved, ends it.
   merge-review:
     type: gate
     linear_state: review
-    rework_to: implement
-    max_rework: 5
+    rework_to: address-review-comments
     transitions:
-      approve: merge
+      approve: done
 
-  # ── 8. Merge ────────────────────────────────────────────────────────────
-  # Merge the PR and clean up.  Short turn count — just the merge.
-  merge:
+  # ── 8. Address review comments ─────────────────────────────────────────
+  # Works through the reviewer's feedback on the same branch and PR, then
+  # re-parks at the merge gate.
+  address-review-comments:
     type: agent
-    prompt: prompts/merge.example.md
+    prompt: prompts/address-review-comments.example.md
     linear_state: active
-    effort: low               # mechanical stage, no reasoning needed
+    model: claude-sonnet-5
+    effort: high
     session: inherit
     transitions:
-      complete: done
+      complete: merge-review
 
   # ── 9. Done (terminal) ─────────────────────────────────────────────────
   done:

@@ -74,15 +74,17 @@ states:
     transitions:
       complete: merge-review
 
-  # The PR is the gate. With `github.enabled`, merging the PR ends the ticket
-  # and a human review comment sends it to address-review-comments; moving the
-  # Linear ticket by hand still works and takes the same path.
+  # The PR is the gate, and the human merges it: no agent runs `gh pr merge`
+  # (the daemon's GitHub account has no business landing its own work). With
+  # `github.enabled`, merging the PR ends the ticket and a human review comment
+  # sends it to address-review-comments. Moving the Linear ticket to Gate
+  # Approved by hand also closes it, without touching the PR.
   merge-review:
     type: gate
     linear_state: review
     rework_to: address-review-comments
     transitions:
-      approve: merge
+      approve: done
 
   address-review-comments:
     type: agent
@@ -93,15 +95,6 @@ states:
     session: inherit
     transitions:
       complete: merge-review
-
-  merge:
-    type: agent
-    prompt: prompts/merge.example.md
-    linear_state: active
-    effort: low
-    session: inherit
-    transitions:
-      complete: done
 
   done:
     type: terminal

@@ -87,14 +87,15 @@ states:
     transitions:
       complete: merge-review
 
-  # The PR is the gate: merging ends the ticket, a human review comment sends
-  # it to address-review-comments (see feature.example.yaml).
+  # The PR is the gate and the human merges it: merging ends the ticket, a
+  # human review comment sends it to address-review-comments, and Gate Approved
+  # closes it without touching the PR (see feature.example.yaml).
   merge-review:
     type: gate
     linear_state: review
     rework_to: address-review-comments
     transitions:
-      approve: merge
+      approve: done
 
   address-review-comments:
     type: agent
@@ -105,15 +106,6 @@ states:
     session: inherit
     transitions:
       complete: merge-review
-
-  merge:
-    type: agent
-    prompt: prompts/merge.example.md       # shared with every workflow
-    linear_state: active
-    effort: low
-    session: inherit
-    transitions:
-      complete: done
 
   done:
     type: terminal

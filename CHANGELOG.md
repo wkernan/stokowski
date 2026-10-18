@@ -6,6 +6,15 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The shipped pipelines no longer run an agent `merge` stage.** `merge-review`
+  approves straight to `done`: the human merges the PR (which the review loop
+  detects), or moves the ticket to Gate Approved to close it without touching
+  the PR. An agent running `gh pr merge` contradicts a daemon account that has
+  no rights to land its own work. `prompts/merge.example.md` is kept for
+  pipelines that still want an agent-run merge; wire it in as a `merge` state.
+
 ### Added
 
 - **GitHub review loop: the PR is the gate.** With `github.enabled`, a
