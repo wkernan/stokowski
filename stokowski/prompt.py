@@ -16,6 +16,7 @@ from typing import Any
 from jinja2 import BaseLoader, Environment, Undefined
 
 from .config import (
+    ChecksConfig,
     LinearStatesConfig,
     ServiceConfig,
     StateConfig,
@@ -159,6 +160,7 @@ def build_lifecycle_section(
     run: int = 1,
     is_rework: bool = False,
     recent_comments: list[dict[str, Any]] | None = None,
+    checks: ChecksConfig | None = None,
 ) -> str:
     """Generate the auto-injected lifecycle section.
 
@@ -224,6 +226,15 @@ def build_lifecycle_section(
         for trigger, target in state_cfg.transitions.items():
             lines.append(f"- `{trigger}` → **{target}**")
         lines.append("")
+        exits = [t for t in state_cfg.transitions if t not in ("complete", "approve")]
+        if exits:
+            lines.append(
+                "To take an exit other than `complete`, set your report's "
+                "`verdict` to its name: " + ", ".join(f"`{t}`" for t in exits) + "."
+            )
+            lines.append("")
+
+    lines.extend(build_checks_section(checks))
 
     # Evidence + reporting contract. Stokowski, not the agent, writes the
     # Linear comment — a model asked to summarise its own work will reliably
@@ -233,6 +244,39 @@ def build_lifecycle_section(
     lines.append("<!-- END STOKOWSKI LIFECYCLE -->")
 
     return "\n".join(lines)
+
+
+def build_checks_section(checks: ChecksConfig | None) -> list[str]:
+    """How to run tests here, and how not to.
+
+    The rules are unconditional; the commands appear when the project
+    configures them. On the pilot ticket an agent with neither started the
+    full suite four times, three overlapping on a 2-CPU machine, and none of
+    them finished — half of a 25-minute stage spent waiting on nothing.
+    """
+    lines = ["### Running checks", ""]
+    if checks is not None and checks.is_set():
+        if checks.quick:
+            lines.append(f"- **Quick check** (while you work): `{checks.quick}`")
+        if checks.full:
+            took = f" — takes about {checks.full_minutes} min here" if checks.full_minutes else ""
+            lines.append(f"- **Full check** (what CI runs){took}: `{checks.full}`")
+        if checks.notes:
+            lines.append(f"- {checks.notes}")
+        lines.append("")
+    lines += [
+        "- Investigating or reviewing? Run only the specs that cover the code "
+        "you are reading. The full suite is the implementer's job.",
+        "- Implementing? Run the full check **once, in the foreground**, when "
+        "you believe you are done, and again after fixing anything it finds.",
+        "- **Never run two test runs at the same time**, and never start one in "
+        "the background and another in the foreground. This machine has few "
+        "cores; parallel runs starve each other until they all time out.",
+        "- If you set a timeout, give the full suite at least twice its usual "
+        "time. A run killed by its own timeout tells you nothing.",
+        "",
+    ]
+    return lines
 
 
 # Written into every prompt. The report is a file rather than a section of the
@@ -489,6 +533,7 @@ def assemble_prompt(
         run=run,
         is_rework=is_rework,
         recent_comments=recent,
+        checks=getattr(cfg, "checks", None),
     )
     parts.append(lifecycle)
 

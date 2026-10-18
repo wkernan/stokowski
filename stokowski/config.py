@@ -180,6 +180,28 @@ class ServerConfig:
 
 
 @dataclass
+class ChecksConfig:
+    """How to verify work in a project, told to every agent stage.
+
+    Without this an agent guesses. On the pilot ticket it started the full
+    test suite four times, three of them overlapping on a 2-CPU machine; none
+    finished, and half the stage went on waiting. Alone, the suite takes 4.5
+    minutes. Knowing the command and how long it takes is most of the fix.
+    """
+    # Fast, targeted: lint plus the specs covering what you touched.
+    quick: str = ""
+    # What CI runs. Run once, in the foreground, before pushing.
+    full: str = ""
+    # How long `full` takes on this machine, so a timeout can be set sanely.
+    full_minutes: int | None = None
+    # Anything else an agent should know (fixtures, flaky areas).
+    notes: str = ""
+
+    def is_set(self) -> bool:
+        return bool(self.quick or self.full)
+
+
+@dataclass
 class ReportingConfig:
     """How a stage's report reaches Linear.
 
@@ -270,6 +292,8 @@ class StateConfig:
     # review loop watches only gates that expect one; an exploration's
     # findings gate has nothing to watch and must not be reported as missing.
     requires_pr: bool = True
+    # Gate only: what the human should do, shown in the gate's Linear comment.
+    description: str | None = None
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
 
@@ -296,6 +320,7 @@ class ProjectConfig:
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
+    checks: ChecksConfig = field(default_factory=ChecksConfig)
     workflow_dir: Path = field(default_factory=lambda: Path("."))
     # Per-project cap (overrides AgentConfig.max_concurrent_per_project[name]).
     max_concurrent: int | None = None
@@ -399,6 +424,7 @@ class ServiceConfig:
     hooks: HooksConfig = field(default_factory=HooksConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
+    checks: ChecksConfig = field(default_factory=ChecksConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     reporting: ReportingConfig = field(default_factory=ReportingConfig)
@@ -578,9 +604,28 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         rework_to=raw.get("rework_to"),
         max_rework=raw.get("max_rework"),
         requires_pr=bool(raw.get("requires_pr", True)),
+        description=(str(raw["description"]).strip() or None) if raw.get("description") else None,
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
     )
+
+
+def choose_transition(state: StateConfig, outcome: str | None) -> str:
+    """Which exit a finished agent state takes.
+
+    The agent's verdict picks the exit when it names a transition the state
+    declares — `implement` reporting `needs-context` parks the ticket with its
+    questions instead of carrying on to review. Any other verdict, or none,
+    takes `complete`, so stages whose verdicts were only ever informational
+    ("blocked", "request-changes") behave exactly as before. Gate transitions
+    (`approve`) are never reachable this way: they are a human's to fire.
+    """
+    if not outcome:
+        return "complete"
+    key = outcome.strip().lower().replace("_", "-")
+    if key and key not in ("complete", "approve") and key in state.transitions:
+        return key
+    return "complete"
 
 
 def merge_state_config(
@@ -663,6 +708,17 @@ def _parse_linear_states(raw: dict[str, Any]) -> LinearStatesConfig:
         rework=str(raw.get("rework", "Rework")),
         canceled=str(raw.get("canceled", "Canceled")),
         terminal=_coerce_list(raw.get("terminal")) or ["Done", "Closed", "Cancelled"],
+    )
+
+
+def _parse_checks(raw: dict[str, Any] | None) -> ChecksConfig:
+    raw = raw or {}
+    minutes = raw.get("full_minutes")
+    return ChecksConfig(
+        quick=str(raw.get("quick", "") or "").strip(),
+        full=str(raw.get("full", "") or "").strip(),
+        full_minutes=_coerce_int(minutes, 0) or None,
+        notes=str(raw.get("notes", "") or "").strip(),
     )
 
 
@@ -813,6 +869,7 @@ def _build_project(
     linear_states_raw = _merge_dict(defaults.get("linear_states"), raw.get("linear_states"))
     claude_raw = _merge_dict(defaults.get("claude"), raw.get("claude"))
     github_raw = _merge_dict(defaults.get("github"), raw.get("github"))
+    checks_raw = _merge_dict(defaults.get("checks"), raw.get("checks"))
 
     workflows, routing = _resolve_workflows(
         workflow_dir,
@@ -834,6 +891,7 @@ def _build_project(
         linear_states=_parse_linear_states(linear_states_raw),
         claude=_parse_claude(claude_raw),
         github=_parse_github(github_raw),
+        checks=_parse_checks(checks_raw),
         workflow_dir=workflow_dir,
         max_concurrent=raw.get("max_concurrent"),
     )
@@ -925,6 +983,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "claude": config_raw.get("claude") or {},
             "routing": config_raw.get("routing") or {},
             "github": config_raw.get("github") or {},
+            "checks": config_raw.get("checks") or {},
         }
         seen_names: set[str] = set()
         for idx, raw in enumerate(projects_raw):
@@ -950,6 +1009,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "claude": config_raw.get("claude") or {},
             "routing": config_raw.get("routing") or {},
             "github": config_raw.get("github") or {},
+            "checks": config_raw.get("checks") or {},
         }
         name = _legacy_project_name(tracker_raw, path)
         projects.append(_build_project(name, synthetic_raw, {}, workflow_dir))
@@ -963,6 +1023,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         hooks=p0.hooks,
         claude=p0.claude,
         github=p0.github,
+        checks=p0.checks,
         agent=agent,
         server=server,
         reporting=reporting,

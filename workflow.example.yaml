@@ -234,6 +234,21 @@ github:
   # acknowledge: true             # react 👀 to the comment that triggered rework
 
 # ---------------------------------------------------------------------------
+# Checks (optional, per project) — how agents verify their work
+# ---------------------------------------------------------------------------
+# Told to every stage, with rules about when to run which: investigation and
+# review run only the tests covering the code they read; the implementer runs
+# the full check once, in the foreground. Without this an agent guesses, and
+# on a small machine overlapping full-suite runs starve each other until all
+# of them time out. Override per project under `projects:`.
+#
+# checks:
+#   quick: "npm run lint && npx vitest run <the test files for what you touched>"
+#   full: "npm run lint && npm test"
+#   full_minutes: 5              # how long `full` takes on this machine
+#   notes: "Integration tests need `docker compose up -d db` first."
+
+# ---------------------------------------------------------------------------
 # Routing — which workflow runs for which ticket
 # ---------------------------------------------------------------------------
 #
@@ -250,8 +265,12 @@ github:
 # The workflow is pinned when an issue is first dispatched and recorded in its
 # tracking comment. Relabelling a ticket mid-run will not move it onto a
 # different state machine.
+#
+# `build` (implement first) is the default: most tickets already say what to
+# build. Put `stokowski-plan` on a ticket that needs research before code — it
+# runs the `feature` pipeline (investigate → ground-check → human review).
 routing:
-  default: feature
+  default: build
   rules:
     - label: bug
       workflow: bug-fix
@@ -259,6 +278,8 @@ routing:
       workflow: exploration
     - label: exploration
       workflow: exploration
+    - label: stokowski-plan
+      workflow: feature
 
 # ---------------------------------------------------------------------------
 # State machine

@@ -66,7 +66,7 @@ def test_no_default_and_no_match_resolves_to_nothing():
 
 def test_shipped_workflows_load_with_clean_names():
     workflows = _load_workflow_dir(REPO)
-    assert {"bug-fix", "feature", "exploration"} <= set(workflows)
+    assert {"build", "bug-fix", "feature", "exploration"} <= set(workflows)
     # A packaging suffix must not leak into the routing name.
     assert not any(n.endswith(".example") for n in workflows)
 
@@ -135,12 +135,14 @@ def shipped():
 
 
 @pytest.mark.parametrize("labels,expected", [
-    ([], "feature"),
+    ([], "build"),
     (["bug"], "bug-fix"),
     (["Spike"], "exploration"),
     (["exploration"], "exploration"),
     (["bug", "spike"], "bug-fix"),
-    (["chore"], "feature"),
+    (["chore"], "build"),
+    (["stokowski-plan"], "feature"),
+    (["Stokowski-Plan", "chore"], "feature"),
 ])
 def test_shipped_routing(shipped, labels, expected):
     assert shipped.projects[0].workflow_for(labels).name == expected
@@ -300,8 +302,8 @@ def _issue(labels, ident="ENG-1", id_="i1"):
 
 def test_the_orchestrator_sees_the_workflows(orchestrator):
     """Regression: the per-project view dropped workflows and routing."""
-    assert set(orchestrator.cfg.workflows) >= {"bug-fix", "feature", "exploration"}
-    assert orchestrator.cfg.routing.default == "feature"
+    assert set(orchestrator.cfg.workflows) >= {"build", "bug-fix", "feature", "exploration"}
+    assert orchestrator.cfg.routing.default == "build"
 
 
 def test_all_states_exists_on_what_the_orchestrator_holds(orchestrator):
@@ -319,7 +321,7 @@ def test_all_states_exists_on_what_the_orchestrator_holds(orchestrator):
 @pytest.mark.parametrize("labels,expected", [
     (["bug"], "bug-fix"),
     (["spike"], "exploration"),
-    ([], "feature"),
+    ([], "build"),
 ])
 def test_the_orchestrator_routes_an_issue(orchestrator, labels, expected):
     assert orchestrator._workflow_name_for(_issue(labels)) == expected

@@ -18,10 +18,27 @@ No description provided.
 
 Implement the solution, create a PR, and ensure it passes all quality checks.
 
+## Before you write code: can this be built as written?
+
+There may be no investigation; a well-written ticket is enough on its own.
+Spend a few minutes, not a research stage, deciding whether it is. It is
+buildable when you can name the files to change, the behaviour to produce and
+how you will prove it, and nothing in the code contradicts the ticket.
+
+If it is **not** — the deliverable is ambiguous, the premise does not match
+the code, or a decision only the owner can make is missing — do not guess and
+do not write code. Write `.stokowski/report.json` with `verdict` set to
+`needs-context`, each question in `open_questions` phrased so it can be
+answered in a sentence, what you would build once answered in `next`, and the
+evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
+
 ## First run
 
-1. Read the investigation summary from the Linear comments.
-2. Read the relevant source files identified in the investigation.
+1. Read the Linear comments. An investigation, or a person's answers to
+   questions you asked earlier, take precedence over your own reading of the
+   ticket.
+2. Read the relevant source files — those the ticket or investigation names,
+   and what they call.
 3. Create a feature branch from `main`, named exactly as below. This is the
    branch name Linear suggests for the ticket, so Linear links the PR to the
    issue and the review loop can find it:
@@ -44,7 +61,8 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
 10. Link the PR to the Linear issue.
 11. Write `.stokowski/report.json`: what changed and why, the exact
     verification commands and their real results, assumptions, and known
-    limitations. Set `verdict` to `complete` or `blocked`, put the reviewer's
+    limitations. Set `verdict` to `complete` (or `blocked`; `needs-context` is
+    only for the case above, before any code), put the reviewer's
     summary in `next`, and anything they must check in `next_steps`. Add 3-5
     bullets to `key_points`: what changed, what you actually verified, and
     anything the reviewer should be suspicious of. Those four fields render at
@@ -54,7 +72,10 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
 
 ## Rework run
 
-If this is a rework run (a branch and PR already exist):
+If you were parked for context and have no PR yet, the answers are in the
+Linear comments: follow **First run** using them.
+
+If this is a rework run and a branch and PR already exist:
 
 1. Find the existing PR:
    ```

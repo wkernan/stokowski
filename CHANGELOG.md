@@ -6,6 +6,28 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`build`, an implement-first pipeline, is the default route.** It runs
+  implement → code-review (fresh session) → merge-review. Research is now
+  opt-in through the `stokowski-plan` label, which routes to `feature`. The
+  pilot ticket spent 37 minutes in two research stages working out what its
+  description already said.
+- **A `needs-context` exit.** When `implement` finds a ticket can't be built as
+  written, it sets its report `verdict` to `needs-context`. Stokowski then
+  parks the ticket at a gate with the agent's questions. Answer them in a
+  comment and move the ticket to Rework. In general, an agent's verdict picks
+  any non-`complete` transition its state declares; otherwise `complete`
+  fires as before. An agent can never fire `approve`.
+- **Gate `description`.** A gate's own text is used as the prompt in its
+  Linear comment.
+- **`checks:` test commands, per project or in `defaults`** (`quick`, `full`,
+  `full_minutes`, `notes`). They render in every stage prompt together with
+  rules for running tests: investigating and reviewing stages run only the
+  specs that cover the change; implement runs the full suite once in the
+  foreground; never run two test runs at the same time. The pilot started the
+  full suite four times, three of them overlapping, and none finished.
+
 ### Changed
 
 - **Compact stage reports.** The Linear comment now carries only what a gate

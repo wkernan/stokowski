@@ -16,7 +16,9 @@ from stokowski.config import parse_workflow_file, validate_config
 
 REPO = Path(__file__).resolve().parent.parent
 
-PR_PIPELINES = ["default", "feature", "bug-fix"]
+PR_PIPELINES = ["default", "feature", "bug-fix", "build"]
+# Pipelines with a research gate before implement opens a PR.
+RESEARCH_PIPELINES = ["default", "feature", "bug-fix"]
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +59,7 @@ def test_a_review_comment_reworks_into_a_stage_that_exists(project, name):
     assert (REPO / stage.prompt).is_file()
 
 
-@pytest.mark.parametrize("name", PR_PIPELINES)
+@pytest.mark.parametrize("name", RESEARCH_PIPELINES)
 def test_gates_before_the_pr_exists_are_not_watched_by_the_review_loop(project, name):
     """research-review parks before implement has opened any PR.
 
