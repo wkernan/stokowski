@@ -381,6 +381,15 @@ def build_reporting_contract() -> list[str]:
         "of your conclusion, not a plan you set out with."
     )
     lines.append("")
+    lines.append(
+        "7. **Write for a reviewer with five minutes.** The Linear comment shows "
+        "only the four fields above plus `risks` and `open_questions`; the rest "
+        "is attached as a file. Keep it proportionate to the decision: `summary` "
+        "under 150 words, `claims` only the ones a reviewer's decision turns on "
+        "(rarely more than 10), one sentence of claim and one of evidence each. "
+        "A long report is not a thorough one — it is one nobody finishes reading."
+    )
+    lines.append("")
 
     return lines
 

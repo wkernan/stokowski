@@ -148,6 +148,7 @@ class Orchestrator:
             github=project.github,
             agent=full.config.agent,
             server=full.config.server,
+            reporting=full.config.reporting,
             linear_states=project.linear_states,
             prompts=project.prompts,
             states=project.states,
@@ -1623,18 +1624,39 @@ class Orchestrator:
             # machinery rather than a comment saying so on every attempt.
             return
 
+        usage = {
+            "total_tokens": attempt.total_tokens,
+            "cost_usd": attempt.cost_usd,
+            "tool_calls": attempt.tool_call_count,
+        }
         body = report_mod.render(
             report,
             state=state,
             run=run,
             uploaded=uploaded,
-            usage={
-                "total_tokens": attempt.total_tokens,
-                "cost_usd": attempt.cost_usd,
-                "tool_calls": attempt.tool_call_count,
-            },
+            usage=usage,
             fallback_text=attempt.result_text,
         )
+        # Attach the full report and post only the decision block. If the
+        # upload fails the full report goes inline: losing the comment's
+        # brevity is fine, losing the evidence is not.
+        if report is not None and self.cfg.reporting.detail == "attach":
+            detail_url = None
+            try:
+                detail_url = await client.upload_file(
+                    f"{issue.identifier}-{state}-run{run}-report.md",
+                    "text/markdown",
+                    body.encode("utf-8"),
+                )
+            except Exception as e:
+                logger.warning(f"Full report upload failed, posting inline: {e}",
+                               extra={"linked_to": issue.identifier})
+            if detail_url:
+                body = report_mod.render_summary(
+                    report, state=state, run=run, detail_url=detail_url,
+                    uploaded=uploaded, usage=usage,
+                    summary_words=self.cfg.reporting.summary_words,
+                )
 
         duration = None
         if attempt.started_at:
