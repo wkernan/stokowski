@@ -145,6 +145,7 @@ class Orchestrator:
             workspace=project.workspace,
             hooks=project.hooks,
             claude=project.claude,
+            github=project.github,
             agent=full.config.agent,
             server=full.config.server,
             linear_states=project.linear_states,
@@ -387,29 +388,44 @@ class Orchestrator:
     # ── GitHub review loop ───────────────────────────────────────────────────
 
     def _start_github_poller(self) -> None:
-        gh = self.cfg.github
-        if not gh.enabled:
-            return
-        token = gh.resolved_token()
-        if not token or not gh.repo:
-            logger.warning("github.enabled but repo/token missing; review loop not started")
-            return
-        self._github = GitHubClient(token, api_base=gh.api_base)
-        self._github_poller = GitHubPoller(
-            self._github, gh,
-            gates=self._review_gate_issues,
-            rework_floor=self._github_rework_floor,
-            on_rework=self._github_on_rework,
-            on_merged=self._github_on_merged,
-            on_closed=self._github_on_closed,
-        )
-        self._tasks["__github_poller__"] = asyncio.create_task(
-            self._github_poller.run(self._stop_event)
-        )
-        logger.info(
-            f"GitHub review loop watching {gh.repo} every {gh.poll_interval_ms // 1000}s "
-            f"(project={self.project_name})"
-        )
+        """Start the review loop. Never raises: it is an add-on to dispatch.
+
+        A problem here (bad config, a client that will not build) must cost
+        the operator the review loop, not the whole orchestrator — the poll
+        loop that follows is what picks tickets up.
+        """
+        try:
+            gh = self.cfg.github
+            if not gh.enabled:
+                return
+            token = gh.resolved_token()
+            if not token or not gh.repo:
+                logger.warning("github.enabled but repo/token missing; review loop not started")
+                return
+            self._github = GitHubClient(token, api_base=gh.api_base)
+            self._github_poller = GitHubPoller(
+                self._github, gh,
+                gates=self._review_gate_issues,
+                rework_floor=self._github_rework_floor,
+                on_rework=self._github_on_rework,
+                on_merged=self._github_on_merged,
+                on_closed=self._github_on_closed,
+            )
+            self._tasks["__github_poller__"] = asyncio.create_task(
+                self._github_poller.run(self._stop_event)
+            )
+            logger.info(
+                f"GitHub review loop watching {gh.repo} every {gh.poll_interval_ms // 1000}s "
+                f"(project={self.project_name})"
+            )
+        except Exception as e:
+            self._github = None
+            self._github_poller = None
+            logger.error(
+                f"GitHub review loop failed to start ({type(e).__name__}: {e}); "
+                f"continuing without it",
+                exc_info=True,
+            )
 
     def _review_gate_issues(self) -> list[tuple[Issue, str]]:
         """Issues parked at a gate whose Linear state is the review state."""
@@ -2201,10 +2217,32 @@ class MultiOrchestrator:
 
         # Run all per-project orchestrators concurrently
         for orch in self.orchestrators.values():
-            self._tasks.append(asyncio.create_task(orch.start()))
+            task = asyncio.create_task(orch.start())
+            task.add_done_callback(self._log_orchestrator_exit(orch.project_name))
+            self._tasks.append(task)
 
         # Block until stop()
         await self._stop_event.wait()
+
+    @staticmethod
+    def _log_orchestrator_exit(project_name: str | None):
+        """Done-callback so a crashed per-project orchestrator is never silent.
+
+        `orch.start()` runs as a background task whose exception nobody awaits;
+        without this a crash during startup leaves the service "active" and
+        the dashboard up while that project dispatches nothing.
+        """
+        def _done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    f"Orchestrator for project '{project_name}' crashed and is no longer "
+                    f"polling: {type(exc).__name__}: {exc}",
+                    exc_info=exc,
+                )
+        return _done
 
     async def _pool_refresh_loop(self):
         """Re-read workflow.yaml periodically to pick up cap changes."""

@@ -369,14 +369,18 @@ class ServiceConfig:
     """Top-level config. `projects` is the authoritative project list.
 
     Top-level `tracker`, `workspace`, `hooks`, `prompts`, `states`,
-    `linear_states`, `claude` remain populated for backward compat with
-    single-project workflows — they mirror `projects[0]` in that case.
+    `linear_states`, `claude`, `github` remain populated for backward compat
+    with single-project workflows — they mirror `projects[0]` in that case.
+    The orchestrator reads a per-project view of this class (see
+    `Orchestrator._project_view`), so any per-project setting must be copied
+    there too or `self.cfg.<setting>` raises at runtime.
     """
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     polling: PollingConfig = field(default_factory=PollingConfig)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
@@ -933,6 +937,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         workspace=p0.workspace,
         hooks=p0.hooks,
         claude=p0.claude,
+        github=p0.github,
         agent=agent,
         server=server,
         linear_states=p0.linear_states,
