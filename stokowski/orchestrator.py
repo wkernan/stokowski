@@ -810,6 +810,11 @@ class Orchestrator:
             if not moved:
                 logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'", extra={"linked_to": issue.identifier})
 
+            # Claim before the timer fires: this runs inside the tick, and the
+            # dispatch loop later in the same tick sees the issue freshly in
+            # the active state. Unclaimed, it dispatches too, and two agents
+            # share one workspace.
+            self.claimed.add(issue.id)
             self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
 
     async def _announce_state(self, issue, state: str, run: int) -> None:
@@ -1941,6 +1946,13 @@ class Orchestrator:
         self._retry_timers.pop(issue_id, None)
 
         if entry is None:
+            return
+
+        if issue_id in self.running:
+            # Already dispatched by another path; a second worker would share
+            # its workspace. Leave the claim to the running worker.
+            logger.warning(f"Retry: {entry.identifier} is already running, skipping",
+                           extra={"linked_to": entry.identifier})
             return
 
         # Fetch fresh candidates to check eligibility
