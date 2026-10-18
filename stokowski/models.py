@@ -83,7 +83,17 @@ class RunAttempt:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     thinking_tokens: int = 0
+    # `total_cost_usd` on a result event is the running total for the whole
+    # *session*, including spend restored from earlier invocations when the
+    # session is resumed (Claude Code >= 2.1.277). A retry or a
+    # `session: inherit` stage therefore re-reports everything before it.
+    # `cost_usd` is this attempt's own spend: the latest reported total minus
+    # `session_cost_baseline`, the total already attributed to earlier attempts
+    # on the same session. The orchestrator sets the baseline at dispatch and
+    # reads `cost_usd_reported` back at exit.
     cost_usd: float = 0.0
+    cost_usd_reported: float = 0.0
+    session_cost_baseline: float = 0.0
     model: str | None = None
     model_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
 

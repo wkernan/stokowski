@@ -79,6 +79,10 @@ class Orchestrator:
         self.total_cost_usd: float = 0.0
         self.total_tool_calls: int = 0
         self.total_seconds_running: float = 0
+        # Highest `total_cost_usd` seen per Claude session. The CLI reports a
+        # session-wide running total on every result, so an attempt that
+        # resumes a session must only count what it added on top of this.
+        self._session_cost_seen: dict[str, float] = {}
         # Most recent rate-limit window seen from any agent. Shared across the
         # whole account, so the latest observation is the accurate one.
         self.rate_limit: dict[str, Any] | None = None
@@ -668,7 +672,7 @@ class Orchestrator:
                 [self.cfg.linear_states.gate_approved],
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch gate-approved issues: {e}")
+            logger.warning(f"Failed to fetch gate-approved issues: {type(e).__name__}: {e}")
             approved_issues = []
 
         for issue in approved_issues:
@@ -729,7 +733,7 @@ class Orchestrator:
                 [self.cfg.linear_states.rework],
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch rework issues: {e}")
+            logger.warning(f"Failed to fetch rework issues: {type(e).__name__}: {e}")
             rework_issues = []
 
         for issue in rework_issues:
@@ -1108,6 +1112,9 @@ class Orchestrator:
                     attempt.session_id = old.session_id
             elif issue.id in self._last_session_ids:
                 attempt.session_id = self._last_session_ids[issue.id]
+
+        if attempt.session_id:
+            attempt.session_cost_baseline = self._session_cost_seen.get(attempt.session_id, 0.0)
 
         self.running[issue.id] = attempt
         task = asyncio.create_task(self._run_worker(issue, attempt))
@@ -1620,6 +1627,11 @@ class Orchestrator:
         self.total_cache_read_tokens += attempt.cache_read_tokens
         self.total_tokens += attempt.total_tokens
         self.total_cost_usd += attempt.cost_usd
+        if attempt.session_id and attempt.cost_usd_reported > 0:
+            self._session_cost_seen[attempt.session_id] = max(
+                self._session_cost_seen.get(attempt.session_id, 0.0),
+                attempt.cost_usd_reported,
+            )
         self.total_tool_calls += attempt.tool_call_count
         if attempt.started_at:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()

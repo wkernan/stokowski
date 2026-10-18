@@ -6,6 +6,22 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cost was overstated by up to 10x.** `total_cost_usd` on a Claude Code
+  result event is the session's running total, and since Claude Code 2.1.277 a
+  resumed session restores its earlier spend into that total. Stokowski summed
+  every reading, so each retry or `session: inherit` stage re-counted all
+  prior spend; a stage that retried 57 times against a rate limit reported
+  ~$1,000 for ~$100 of work. Cost is now the latest reading minus what earlier
+  attempts on the same session already accounted for. `modelUsage` figures,
+  which are running totals too, are replaced rather than summed. Token counts
+  were never affected (`usage` is per invocation).
+- Dashboard labels cost as an estimate (`≈$… est.`): it is the CLI's
+  list-price calculation, and on a subscription nothing is billed per run.
+- "Failed to fetch gate-approved/rework issues" warnings include the exception
+  type, so a bare timeout no longer logs as an empty message.
+
 ---
 
 ## [1.1.0] - 2026-08-31

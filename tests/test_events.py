@@ -119,15 +119,78 @@ def _result(**overrides) -> dict:
 def test_usage_accumulates_across_turns_rather_than_overwriting():
     """A worker runs many `claude -p` invocations via --resume.
 
-    Each reports usage for itself only, so totals must add up. The old parser
-    assigned rather than accumulated, so a ten-turn run reported turn ten.
+    `usage` reports each invocation on its own, so token totals must add up.
+    The old parser assigned rather than accumulated, so a ten-turn run
+    reported turn ten.
     """
     attempt = replay([_result(), _result(), _result()])
     assert attempt.input_tokens == 300
     assert attempt.output_tokens == 600
     assert attempt.total_tokens == 3000
-    assert attempt.cost_usd == pytest.approx(4.5)
     assert attempt.agent_turns == 9
+
+
+def test_cost_is_the_latest_session_total_not_a_sum():
+    """`total_cost_usd` is the session's running total, not the turn's cost.
+
+    Claude Code (>= 2.1.277) restores a session's spend when it is resumed and
+    reports the grand total on every result. Three resumed turns reporting
+    1.5, 4.0 and 4.0 mean the session cost 4.0, not 9.5. The old parser summed
+    them; a stage that retried 57 times against a rate limit showed ~10x its
+    real spend.
+    """
+    attempt = replay([
+        _result(total_cost_usd=1.5),
+        _result(total_cost_usd=4.0),
+        _result(total_cost_usd=4.0),
+    ])
+    assert attempt.cost_usd == pytest.approx(4.0)
+    assert attempt.cost_usd_reported == pytest.approx(4.0)
+
+
+def test_resumed_attempt_counts_only_its_own_spend():
+    """A new attempt on an old session starts from the orchestrator's baseline.
+
+    The orchestrator records 1.5 as already attributed to session s1; this
+    attempt's result reports the session at 4.0, so it added 2.5.
+    """
+    attempt = RunAttempt(issue_id="i1", issue_identifier="ENG-1", session_id="s1")
+    attempt.session_cost_baseline = 1.5
+    replay([_result(total_cost_usd=4.0)], attempt)
+    assert attempt.cost_usd == pytest.approx(2.5)
+    assert attempt.cost_usd_reported == pytest.approx(4.0)
+
+
+def test_retry_that_did_nothing_costs_nothing():
+    """A retry that hits the rate limit and exits re-reports the old total.
+
+    This is the 27-second, zero-tool-call run that was ledgered at $17.60.
+    """
+    attempt = RunAttempt(issue_id="i1", issue_identifier="ENG-1", session_id="s1")
+    attempt.session_cost_baseline = 17.6
+    replay([_result(total_cost_usd=17.6)], attempt)
+    assert attempt.cost_usd == 0.0
+
+
+def test_cost_below_baseline_clamps_to_zero():
+    """A reading below the baseline (older CLI, or a reset session) never goes negative."""
+    attempt = RunAttempt(issue_id="i1", issue_identifier="ENG-1", session_id="s1")
+    attempt.session_cost_baseline = 5.0
+    replay([_result(total_cost_usd=1.0)], attempt)
+    assert attempt.cost_usd == 0.0
+
+
+def test_model_usage_is_replaced_not_summed():
+    """`modelUsage` is also a running total; the latest event supersedes."""
+    first = _result(modelUsage={"claude-opus-5": {"inputTokens": 10, "outputTokens": 20,
+                                                 "cacheReadInputTokens": 30,
+                                                 "cacheCreationInputTokens": 40, "costUSD": 1.0}})
+    second = _result(modelUsage={"claude-opus-5": {"inputTokens": 15, "outputTokens": 25,
+                                                  "cacheReadInputTokens": 35,
+                                                  "cacheCreationInputTokens": 45, "costUSD": 1.4}})
+    attempt = replay([first, second])
+    assert attempt.model_usage["claude-opus-5"]["cost_usd"] == pytest.approx(1.4)
+    assert attempt.model_usage["claude-opus-5"]["input_tokens"] == 15
 
 
 def test_tool_errors_are_counted_and_surfaced():

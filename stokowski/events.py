@@ -138,20 +138,23 @@ def _accumulate_usage(attempt: RunAttempt, usage: dict) -> None:
 
 
 def _accumulate_model_usage(attempt: RunAttempt, model_usage: dict) -> None:
-    """Merge the per-model cost/token breakdown from a result event."""
+    """Record the per-model cost/token breakdown from a result event.
+
+    Like `total_cost_usd`, every `modelUsage` figure is a running total for the
+    session, so the latest event supersedes earlier ones rather than adding to
+    them. On a resumed session this breakdown covers the whole session, not
+    just this attempt; it is informational, and per-attempt spend is `cost_usd`.
+    """
     for model, stats in model_usage.items():
         if not isinstance(stats, dict):
             continue
-        bucket = attempt.model_usage.setdefault(
-            model,
-            {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
-             "cache_creation_tokens": 0, "cost_usd": 0.0},
-        )
-        bucket["input_tokens"] += stats.get("inputTokens", 0) or 0
-        bucket["output_tokens"] += stats.get("outputTokens", 0) or 0
-        bucket["cache_read_tokens"] += stats.get("cacheReadInputTokens", 0) or 0
-        bucket["cache_creation_tokens"] += stats.get("cacheCreationInputTokens", 0) or 0
-        bucket["cost_usd"] += stats.get("costUSD", 0.0) or 0.0
+        attempt.model_usage[model] = {
+            "input_tokens": stats.get("inputTokens", 0) or 0,
+            "output_tokens": stats.get("outputTokens", 0) or 0,
+            "cache_read_tokens": stats.get("cacheReadInputTokens", 0) or 0,
+            "cache_creation_tokens": stats.get("cacheCreationInputTokens", 0) or 0,
+            "cost_usd": stats.get("costUSD", 0.0) or 0.0,
+        }
 
 
 def process_event(
@@ -308,9 +311,15 @@ def _handle_result(event: dict, attempt: RunAttempt) -> None:
     if isinstance(model_usage, dict):
         _accumulate_model_usage(attempt, model_usage)
 
+    # `total_cost_usd` is the session's running total, not this invocation's
+    # cost (see RunAttempt.cost_usd). Take the latest reading and subtract what
+    # earlier attempts on this session already accounted for. Summing readings
+    # double-counts: a stage that retried 57 times against a rate limit was
+    # reporting ~10x its real spend.
     cost = event.get("total_cost_usd")
     if isinstance(cost, (int, float)):
-        attempt.cost_usd += float(cost)
+        attempt.cost_usd_reported = float(cost)
+        attempt.cost_usd = max(0.0, attempt.cost_usd_reported - attempt.session_cost_baseline)
 
     for field, key in (("duration_ms", "duration_ms"), ("duration_api_ms", "duration_api_ms")):
         value = event.get(key)

@@ -1323,11 +1323,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('v-runtime').textContent  = fmtSecs(data.totals?.seconds_running || 0);
 
       // Cost is the number that actually tells you what a run was worth, so it
-      // rides alongside the token count rather than being buried.
+      // rides alongside the token count rather than being buried. It is the
+      // CLI's list-price estimate; on a subscription nothing is billed per run.
       const cost = data.totals?.cost_usd || 0;
       const toolCalls = data.totals?.tool_calls || 0;
       document.getElementById('v-tokens-sub').textContent =
-        '$' + cost.toFixed(2) + (toolCalls ? ' \u00b7 ' + fmt(toolCalls) + ' tool calls' : '');
+        '\u2248$' + cost.toFixed(2) + ' est.' + (toolCalls ? ' \u00b7 ' + fmt(toolCalls) + ' tool calls' : '');
 
       document.getElementById('m-running').className  = 'metric' + (active ? ' active' : '');
       document.getElementById('m-tokens').className   = 'metric' + (data.totals?.total_tokens > 0 ? ' active' : '');
