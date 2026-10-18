@@ -8,6 +8,11 @@ All notable changes to Stokowski are documented here.
 
 ### Added
 
+- **`skills/stokowski-ticket`, a Claude Code skill for writing tickets Stokowski
+  builds.** It covers route labels (and when research is redundant), research
+  done before filing in place of a ground-check stage, settled decisions
+  instead of open choices, a ticket template, sizing, a pre-arm checklist, and
+  how to answer each gate. Install by copying it to `~/.claude/skills/`.
 - **`build`, an implement-first pipeline, is the default route.** It runs
   implement → code-review (fresh session) → merge-review. Research is now
   opt-in through the `stokowski-plan` label, which routes to `feature`. The
