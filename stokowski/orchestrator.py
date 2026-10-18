@@ -31,7 +31,7 @@ from .models import Issue, RetryEntry, RunAttempt
 from .pool import ConcurrencyPool
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
-from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
+from .tracking import make_gate_comment, make_state_comment, latest_workflow, parse_latest_tracking
 from . import artifacts as artifacts_mod
 from . import report as report_mod
 from .events import summarise_tool_input
@@ -211,6 +211,17 @@ class Orchestrator:
         if not tracking:
             return
         name = tracking.get("workflow")
+        if name and name in self.cfg.workflows:
+            self._issue_workflow[issue.id] = name
+
+    def _adopt_workflow_from_comments(self, issue: Issue, comments: list[dict]) -> None:
+        """Restore the pin from the latest tracking comment that names one.
+
+        Gate handlers must call this before resolving the gate: an issue
+        approved after a restart is otherwise re-routed from its labels, and
+        a gate name means nothing in a pipeline that has no such state.
+        """
+        name = latest_workflow(comments)
         if name and name in self.cfg.workflows:
             self._issue_workflow[issue.id] = name
 
@@ -566,7 +577,7 @@ class Orchestrator:
         tracking = parse_latest_tracking(comments)
         # Restore the pipeline this issue started on before interpreting its
         # state — a state name only means something inside its own workflow.
-        self._adopt_workflow_from_tracking(issue, tracking)
+        self._adopt_workflow_from_comments(issue, comments)
 
         entry = self._entry_state_for(issue)
         if entry is None:
@@ -658,6 +669,7 @@ class Orchestrator:
             status="waiting",
             prompt=(state_cfg.description if state_cfg and state_cfg.description else prompt) or "",
             run=run,
+            workflow=self._workflow_name_for(issue),
         )
         await client.post_comment(issue.id, comment)
 
@@ -838,16 +850,31 @@ class Orchestrator:
                 continue
 
             gate_state = self._pending_gates.pop(issue.id, None)
-            if not gate_state:
+            if not gate_state or issue.id not in self._issue_workflow:
                 comments = await client.fetch_comments(issue.id)
+                self._adopt_workflow_from_comments(issue, comments)
                 tracking = parse_latest_tracking(comments)
-                if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
+                # `approved` too: an approval whose transition never happened
+                # (a crash, or the old re-routing bug) is still in Gate
+                # Approved and must be able to finish rather than stall.
+                if not gate_state and tracking and tracking.get("type") == "gate" \
+                        and tracking.get("status") in ("waiting", "approved"):
                     gate_state = tracking.get("state", "")
+
+            if gate_state and gate_state not in self._states_for(issue):
+                logger.warning(
+                    f"Gate '{gate_state}' for {issue.identifier} is not a state of workflow "
+                    f"'{self._workflow_name_for(issue)}' — leaving it in "
+                    f"'{self.cfg.linear_states.gate_approved}'",
+                    extra={"linked_to": issue.identifier},
+                )
+                continue
 
             if gate_state:
                 run = self._issue_state_runs.get(issue.id, 1)
                 comment = make_gate_comment(
                     state=gate_state, status="approved", run=run,
+                    workflow=self._workflow_name_for(issue),
                 )
                 await client.post_comment(issue.id, comment)
 
@@ -899,10 +926,12 @@ class Orchestrator:
                 continue
 
             gate_state = self._pending_gates.pop(issue.id, None)
-            if not gate_state:
+            if not gate_state or issue.id not in self._issue_workflow:
                 comments = await client.fetch_comments(issue.id)
+                self._adopt_workflow_from_comments(issue, comments)
                 tracking = parse_latest_tracking(comments)
-                if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
+                if not gate_state and tracking and tracking.get("type") == "gate" \
+                        and tracking.get("status") == "waiting":
                     gate_state = tracking.get("state", "")
 
             if gate_state:
@@ -919,6 +948,7 @@ class Orchestrator:
                     # Exceeded max rework — post escalated comment, don't transition
                     comment = make_gate_comment(
                         state=gate_state, status="escalated", run=run,
+                        workflow=self._workflow_name_for(issue),
                     )
                     await client.post_comment(issue.id, comment)
                     logger.warning(
@@ -943,6 +973,7 @@ class Orchestrator:
                 comment = make_gate_comment(
                     state=gate_state, status="rework",
                     rework_to=rework_to, run=new_run,
+                    workflow=self._workflow_name_for(issue),
                 )
                 await client.post_comment(issue.id, comment)
 
