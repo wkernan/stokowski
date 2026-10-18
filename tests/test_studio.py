@@ -243,7 +243,7 @@ def test_the_workflow_file_cannot_be_written_through_the_prompt_route(studio):
 
 
 def test_describe_reports_the_pipeline(studio):
-    d = studio.describe()
+    d = studio.describe("feature")
     names = [s["name"] for s in d["states"]]
     assert d["entry_state"] == "investigate"
     assert "ground-check" in names
@@ -314,8 +314,8 @@ def test_unknown_workflows_are_refused(studio):
 def test_describe_lists_workflows_and_the_routing_table(studio):
     d = studio.describe()
     # `default` is the example's inline states block, which is a workflow too.
-    assert set(d["workflows"]) == {"bug-fix", "exploration", "feature", "default"}
-    assert d["selected_workflow"] == d["routing"]["default"] == "feature"
+    assert set(d["workflows"]) == {"build", "bug-fix", "exploration", "feature", "default"}
+    assert d["selected_workflow"] == d["routing"]["default"] == "build"
     assert {"label": "bug", "workflow": "bug-fix"} in d["routing"]["rules"]
 
 
@@ -347,7 +347,7 @@ def test_setting_the_default_workflow(studio, workflow):
 @pytest.fixture
 def inline_default(workflow):
     """A config whose routing default is its inline states block."""
-    text = workflow.read_text().replace("default: feature", "default: default")
+    text = workflow.read_text().replace("default: build", "default: default")
     workflow.write_text(text)
     return Studio(workflow)
 

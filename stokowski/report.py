@@ -65,6 +65,7 @@ VERDICTS: dict[str, tuple[str, str]] = {
     "blocked":         ("⛔", "Blocked"),
     "cannot-verify":   ("⛔", "Cannot verify"),
     "not-reproducible":("⛔", "Not reproducible"),
+    "needs-context":   ("❓", "Needs context"),
 }
 
 # The agent's own confidence, applied as a label so a board can be filtered by
@@ -87,6 +88,14 @@ def _as_list(value: Any) -> list:
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def normalised_verdict(report: dict[str, Any] | None) -> str | None:
+    """The verdict in the form transitions are named in, or None."""
+    if not report:
+        return None
+    verdict = _text(report.get("verdict")).lower().replace("_", "-")
+    return verdict or None
 
 
 def load(workspace_path: Path, result_text: str = "") -> dict[str, Any] | None:

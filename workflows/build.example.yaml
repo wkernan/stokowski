@@ -1,0 +1,83 @@
+# =============================================================================
+# Build — implement first, the default pipeline
+# =============================================================================
+#
+# Selected by the routing rules in workflow.example.yaml when nothing more
+# specific matches. Most tickets already say what to build; spending two
+# research stages and a human gate re-deriving that before any code is written
+# cost a pilot ticket 37 minutes and ~7.7M tokens. Here `implement` starts by
+# checking the ticket is executable as written. If it is not, it says exactly
+# what it needs and the ticket parks at `needs-context`; you answer in a
+# Linear comment and move the ticket to Rework.
+#
+# Tickets that do need research first carry the `stokowski-plan` label, which
+# routes them to the `feature` pipeline (investigate → ground-check → review).
+#
+# The adversarial `code-review` runs in a fresh session after the PR exists,
+# which is where the grounding check's independence now earns its keep.
+# =============================================================================
+
+description: "Implement first: build what the ticket says, or park with questions if it cannot be built as written."
+
+prompts:
+  global_prompt: prompts/global.example.md
+
+states:
+
+  implement:
+    type: agent
+    prompt: prompts/implement.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: code-review
+      needs-context: needs-context     # the ticket cannot be built as written
+
+  # Parks before any PR exists, so the review loop has nothing to watch.
+  needs-context:
+    type: gate
+    linear_state: review
+    requires_pr: false
+    description: >-
+      Stokowski could not build this ticket as written — the questions are in the
+      report above. Answer them in a comment, then move the ticket to Rework. Move
+      it to Gate Approved instead to have it build the ticket as written.
+    rework_to: implement
+    transitions:
+      approve: implement
+
+  code-review:
+    type: agent
+    prompt: prompts/review.example.md       # shared with every workflow
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh                          # cannot inherit the implementer's assumptions
+    transitions:
+      complete: merge-review
+
+  # The PR is the gate and you merge it: merging ends the ticket, a review
+  # comment on the PR sends it to address-review-comments, and Gate Approved
+  # closes it without touching the PR.
+  merge-review:
+    type: gate
+    linear_state: review
+    rework_to: address-review-comments
+    transitions:
+      approve: done
+
+  address-review-comments:
+    type: agent
+    prompt: prompts/address-review-comments.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: merge-review
+
+  done:
+    type: terminal
+    linear_state: terminal

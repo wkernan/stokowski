@@ -115,6 +115,10 @@ class RunAttempt:
     compaction_count: int = 0
     result_is_error: bool = False
     result_text: str = ""
+    # The report's verdict, normalised. When it names a transition the state
+    # declares (implement's `needs-context`), that exit fires instead of
+    # `complete`. Any other verdict leaves the default path unchanged.
+    outcome: str | None = None
     rate_limit: dict[str, Any] | None = None
 
     # ── Artifacts ────────────────────────────────────────────────────────

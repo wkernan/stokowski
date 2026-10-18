@@ -21,6 +21,7 @@ from .config import (
     StateConfig,
     WorkflowDefinition,
     _resolve_linear_state_name,
+    choose_transition,
     merge_state_config,
     parse_workflow_file,
     validate_config,
@@ -146,6 +147,7 @@ class Orchestrator:
             hooks=project.hooks,
             claude=project.claude,
             github=project.github,
+            checks=project.checks,
             agent=full.config.agent,
             server=full.config.server,
             reporting=full.config.reporting,
@@ -654,7 +656,7 @@ class Orchestrator:
         comment = make_gate_comment(
             state=state_name,
             status="waiting",
-            prompt=prompt or "",
+            prompt=(state_cfg.description if state_cfg and state_cfg.description else prompt) or "",
             run=run,
         )
         await client.post_comment(issue.id, comment)
@@ -1619,6 +1621,11 @@ class Orchestrator:
             logger.warning(f"Could not load report: {e}", extra={"linked_to": issue.identifier})
             report = None
 
+        # The verdict doubles as the agent's choice of exit. Captured here
+        # because the report file is consumed below, before the worker exits.
+        if report is not None:
+            attempt.outcome = report_mod.normalised_verdict(report)
+
         if report is None and not uploaded and attempt.status != "succeeded":
             # A run that failed with nothing to show gets the normal retry
             # machinery rather than a comment saying so on every attempt.
@@ -1832,9 +1839,18 @@ class Orchestrator:
         self._release_slot(issue.id)
 
         if attempt.status == "succeeded":
-            if attempt.state_name and attempt.state_name in self._states_for(issue):
-                # State machine mode: transition via "complete"
-                asyncio.create_task(self._safe_transition(issue, "complete"))
+            states = self._states_for(issue)
+            if attempt.state_name and attempt.state_name in states:
+                # State machine mode: the agent may pick a declared exit by
+                # its verdict (implement → `needs-context`); anything else,
+                # including no report, takes the default `complete`.
+                transition = choose_transition(states[attempt.state_name], attempt.outcome)
+                if transition != "complete":
+                    logger.info(
+                        f"{issue.identifier} chose exit '{transition}' from {attempt.state_name}",
+                        extra={"linked_to": issue.identifier},
+                    )
+                asyncio.create_task(self._safe_transition(issue, transition))
             else:
                 # Legacy mode
                 self._schedule_retry(issue, attempt_num=1, delay_ms=1000)
