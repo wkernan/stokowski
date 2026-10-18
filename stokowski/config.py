@@ -22,7 +22,31 @@ class TrackerConfig:
     kind: str = "linear"
     endpoint: str = "https://api.linear.app/graphql"
     api_key: str = ""
+    # Intake is either one Linear project (`project_slug`) or a team plus a
+    # set of required intake labels (`team` + `labels`). Labels outlive
+    # Linear's project churn, and an explicit opt-in label is the safer
+    # default for an autonomous agent: an unlabelled ticket is never touched.
+    # The two shapes can be combined; every predicate given must hold.
     project_slug: str = ""
+    team: str = ""
+    labels: list[str] = field(default_factory=list)
+    # Per-ticket opt-out. Checked on every fetch, so adding it to a parked
+    # ticket stops the daemon acting on it from the next tick; it never
+    # tears down a turn already in flight.
+    skip_label: str = "stokowski-skip"
+
+    def is_scoped(self) -> bool:
+        return bool(self.project_slug or (self.team and self.labels))
+
+    def scope_description(self) -> str:
+        parts = []
+        if self.project_slug:
+            parts.append(f"project={self.project_slug}")
+        if self.team:
+            parts.append(f"team={self.team}")
+        if self.labels:
+            parts.append("labels=" + "+".join(self.labels))
+        return " ".join(parts) or "unscoped"
 
 
 @dataclass
@@ -237,6 +261,10 @@ class ProjectConfig:
             env["LINEAR_API_KEY"] = api_key
         if self.tracker.project_slug:
             env["LINEAR_PROJECT_SLUG"] = self.tracker.project_slug
+        if self.tracker.team:
+            env["LINEAR_TEAM"] = self.tracker.team
+        if self.tracker.labels:
+            env["LINEAR_INTAKE_LABELS"] = ",".join(self.tracker.labels)
         if self.tracker.endpoint:
             env["LINEAR_ENDPOINT"] = self.tracker.endpoint
         env["STOKOWSKI_PROJECT"] = self.name
@@ -520,11 +548,16 @@ def merge_state_config(
 # ── Helpers for parsing the per-project block ───────────────────────────────
 
 def _parse_tracker(raw: dict[str, Any]) -> TrackerConfig:
+    labels = [l.strip() for l in _coerce_list(raw.get("labels")) if str(l).strip()]
+    skip = str(raw.get("skip_label", "stokowski-skip") or "").strip()
     return TrackerConfig(
         kind=str(raw.get("kind", "linear")),
         endpoint=str(raw.get("endpoint", "https://api.linear.app/graphql")),
         api_key=str(raw.get("api_key", "")),
-        project_slug=str(raw.get("project_slug", "")),
+        project_slug=str(raw.get("project_slug", "") or "").strip(),
+        team=str(raw.get("team", "") or "").strip(),
+        labels=labels,
+        skip_label=skip,
     )
 
 
@@ -873,8 +906,21 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
         errors.append(f"{prefix}: unsupported tracker kind: {project.tracker.kind}")
     if not project.resolved_api_key():
         errors.append(f"{prefix}: missing tracker API key")
-    if not project.tracker.project_slug:
-        errors.append(f"{prefix}: missing tracker.project_slug")
+    t = project.tracker
+    if not t.is_scoped():
+        if t.labels and not t.team:
+            errors.append(f"{prefix}: tracker.labels needs tracker.team (labels are per team)")
+        elif t.team and not t.labels:
+            errors.append(
+                f"{prefix}: tracker.team needs at least one intake label in tracker.labels "
+                f"— an unlabelled team queue would dispatch every ticket"
+            )
+        else:
+            errors.append(
+                f"{prefix}: tracker needs either project_slug or team + labels"
+            )
+    if t.skip_label and t.skip_label.lower() in {l.lower() for l in t.labels}:
+        errors.append(f"{prefix}: skip_label '{t.skip_label}' is also an intake label")
 
     for gp in global_prompt_paths(getattr(project.prompts, "global_prompt", None)):
         if not _prompt_exists(project.workflow_dir, gp):
@@ -1014,4 +1060,29 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         return errors
     for project in cfg.projects:
         _validate_project(project, errors)
+    _validate_intake_disjoint(cfg.projects, errors)
     return errors
+
+
+def _validate_intake_disjoint(projects: list[ProjectConfig], errors: list[str]) -> None:
+    """Two label-scoped projects on one team must not both claim a ticket.
+
+    The intake label is the routing decision, so a ticket matching two
+    projects would be dispatched twice into two repos. Refuse to start rather
+    than let the tie be broken by list order.
+    """
+    scoped = [p for p in projects if p.tracker.team and p.tracker.labels]
+    for i, a in enumerate(scoped):
+        for b in scoped[i + 1:]:
+            if a.tracker.team.lower() != b.tracker.team.lower():
+                continue
+            la = {l.lower() for l in a.tracker.labels}
+            lb = {l.lower() for l in b.tracker.labels}
+            # A ticket satisfies a project when it carries ALL of its labels,
+            # so the two overlap only if one label set is a subset of the other.
+            if la <= lb or lb <= la:
+                errors.append(
+                    f"projects '{a.name}' and '{b.name}' both claim team "
+                    f"{a.tracker.team} tickets labelled {sorted(la & lb)} — "
+                    f"intake labels must be disjoint"
+                )

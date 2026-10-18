@@ -6,6 +6,17 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Intake by team + labels.** `tracker` accepts `team` and `labels` as an
+  alternative (or addition) to `project_slug`: a ticket is picked up only when
+  it is in the team and carries every intake label. One label per target repo
+  turns the label into the routing decision; the daemon refuses to start if two
+  projects on a team could both claim a ticket. A `skip_label` (default
+  `stokowski-skip`) opts a ticket out on every candidate and gate fetch from
+  the next tick, without tearing down a turn in flight. `--dry-run` prints the
+  resolved scope. Agents see `LINEAR_TEAM` and `LINEAR_INTAKE_LABELS`.
+
 ### Fixed
 
 - **Cost was overstated by up to 10x.** `total_cost_usd` on a Claude Code

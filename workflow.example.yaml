@@ -75,6 +75,16 @@ tracker:
   kind: linear
   project_slug: "abc123def456"    # hex slugId from your Linear project URL
   api_key: "lin_api_your_key_here"  # your Linear API key — agents inherit this
+  # Alternative to project_slug: a team plus intake labels. A ticket is picked
+  # up only when it is in the team AND carries every label listed. Labels
+  # outlive Linear's project churn, and opt-in is the safer default for an
+  # autonomous agent. One label per target repo keeps projects disjoint —
+  # the daemon refuses to start if two projects on a team could both claim a
+  # ticket. Both shapes may be combined; every predicate given must hold.
+  #   team: ENG
+  #   labels: [stokowski-ready]
+  # Per-ticket opt-out, honoured on every fetch (default shown):
+  #   skip_label: stokowski-skip
 
 # ---------------------------------------------------------------------------
 # Linear state name mapping

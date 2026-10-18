@@ -7,17 +7,15 @@ from datetime import datetime
 
 import httpx
 
+from .config import TrackerConfig
 from .models import BlockerRef, Issue
 
 logger = logging.getLogger("stokowski.linear")
 
 CANDIDATE_QUERY = """
-query($projectSlug: String!, $states: [String!]!, $after: String) {
+query($filter: IssueFilter!, $after: String) {
   issues(
-    filter: {
-      project: { slugId: { eq: $projectSlug } }
-      state: { name: { in: $states } }
-    }
+    filter: $filter
     first: 50
     after: $after
     orderBy: createdAt
@@ -66,12 +64,9 @@ query($ids: [ID!]!) {
 """
 
 ISSUES_BY_STATES_QUERY = """
-query($projectSlug: String!, $states: [String!]!, $after: String) {
+query($filter: IssueFilter!, $after: String) {
   issues(
-    filter: {
-      project: { slugId: { eq: $projectSlug } }
-      state: { name: { in: $states } }
-    }
+    filter: $filter
     first: 50
     after: $after
   ) {
@@ -83,10 +78,38 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       id
       identifier
       state { name }
+      labels { nodes { name } }
     }
   }
 }
 """
+
+
+def build_issue_filter(tracker: TrackerConfig, states: list[str]) -> dict:
+    """The Linear `IssueFilter` for a tracker's intake scope in the given states.
+
+    Every configured predicate applies: project slug, team key, and each
+    intake label (AND-combined — a ticket must carry all of them). The skip
+    label is applied client-side by `_is_skipped`, so both candidate and gate
+    fetches honour it without depending on collection-filter semantics.
+    """
+    f: dict = {"state": {"name": {"in": list(states)}}}
+    if tracker.project_slug:
+        f["project"] = {"slugId": {"eq": tracker.project_slug}}
+    if tracker.team:
+        f["team"] = {"key": {"eqIgnoreCase": tracker.team}}
+    if tracker.labels:
+        f["and"] = [
+            {"labels": {"some": {"name": {"eqIgnoreCase": label}}}}
+            for label in tracker.labels
+        ]
+    return f
+
+
+def _is_skipped(issue: Issue, tracker: TrackerConfig) -> bool:
+    """A ticket carrying the opt-out label is invisible to every fetch."""
+    skip = (tracker.skip_label or "").strip().lower()
+    return bool(skip) and skip in issue.labels
 
 COMMENT_CREATE_MUTATION = """
 mutation($issueId: String!, $body: String!) {
@@ -267,17 +290,14 @@ class LinearClient:
         return data.get("data", {})
 
     async def fetch_candidate_issues(
-        self, project_slug: str, active_states: list[str]
+        self, tracker: TrackerConfig, active_states: list[str]
     ) -> list[Issue]:
-        """Fetch all issues in active states for the project."""
+        """Fetch every issue in the tracker's intake scope that is in an active state."""
         issues: list[Issue] = []
         cursor = None
 
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": active_states,
-            }
+            variables: dict = {"filter": build_issue_filter(tracker, active_states)}
             if cursor:
                 variables["after"] = cursor
 
@@ -287,9 +307,13 @@ class LinearClient:
 
             for node in nodes:
                 try:
-                    issues.append(_normalize_issue(node))
+                    issue = _normalize_issue(node)
                 except (KeyError, TypeError) as e:
                     logger.warning(f"Skipping malformed issue node: {e}")
+                    continue
+                if _is_skipped(issue, tracker):
+                    continue
+                issues.append(issue)
 
             page_info = issues_data.get("pageInfo", {})
             if page_info.get("hasNextPage") and page_info.get("endCursor"):
@@ -314,17 +338,14 @@ class LinearClient:
         return result
 
     async def fetch_issues_by_states(
-        self, project_slug: str, states: list[str]
+        self, tracker: TrackerConfig, states: list[str]
     ) -> list[Issue]:
-        """Fetch issues in specific states (for terminal cleanup)."""
+        """Fetch issues in the intake scope that sit in specific states (gates, cleanup)."""
         issues: list[Issue] = []
         cursor = None
 
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": states,
-            }
+            variables: dict = {"filter": build_issue_filter(tracker, states)}
             if cursor:
                 variables["after"] = cursor
 
@@ -332,14 +353,20 @@ class LinearClient:
             issues_data = data.get("issues", {})
             for node in issues_data.get("nodes", []):
                 if node and node.get("id"):
-                    issues.append(
-                        Issue(
-                            id=node["id"],
-                            identifier=node.get("identifier", ""),
-                            title="",
-                            state=(node.get("state") or {}).get("name", ""),
-                        )
+                    issue = Issue(
+                        id=node["id"],
+                        identifier=node.get("identifier", ""),
+                        title="",
+                        state=(node.get("state") or {}).get("name", ""),
+                        labels=[
+                            label["name"].lower()
+                            for label in (node.get("labels") or {}).get("nodes", [])
+                            if label.get("name")
+                        ],
                     )
+                    if _is_skipped(issue, tracker):
+                        continue
+                    issues.append(issue)
 
             page_info = issues_data.get("pageInfo", {})
             if page_info.get("hasNextPage") and page_info.get("endCursor"):

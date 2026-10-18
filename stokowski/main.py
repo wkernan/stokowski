@@ -613,7 +613,9 @@ async def dry_run(workflow_path: str):
         )
         cap_str = f", per-project cap: {per_project_cap}" if per_project_cap else ""
         console.print(f"[bold cyan]Project '{project.name}'[/bold cyan]")
-        console.print(f"  Tracker: {project.tracker.kind}  slug={project.tracker.project_slug}{cap_str}")
+        console.print(f"  Tracker: {project.tracker.kind}  {project.tracker.scope_description()}{cap_str}")
+        if project.tracker.skip_label:
+            console.print(f"  Opt-out label: {project.tracker.skip_label}")
         console.print(f"  Claude model: {project.claude.model or 'default'}  permission={project.claude.permission_mode}")
         console.print(f"  Workspace root: {project.workspace.resolved_root()}")
         if project.paused:
@@ -636,7 +638,7 @@ async def dry_run(workflow_path: str):
         )
         try:
             candidates = await client.fetch_candidate_issues(
-                project.tracker.project_slug,
+                project.tracker,
                 project.active_linear_states(),
             )
         except Exception as e:

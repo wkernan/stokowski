@@ -316,7 +316,7 @@ class Orchestrator:
         logger.info(
             f"Starting orchestrator "
             f"project={self.project_name} "
-            f"slug={self.cfg.tracker.project_slug} "
+            f"{self.cfg.tracker.scope_description()} "
             f"max_agents={self.cfg.agent.max_concurrent_agents} "
             f"poll_ms={self.cfg.polling.interval_ms}"
         )
@@ -381,7 +381,7 @@ class Orchestrator:
         try:
             client = self._ensure_linear_client()
             terminal = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug,
+                self.cfg.tracker,
                 self.cfg.terminal_linear_states(),
             )
             ws_root = self.cfg.workspace.resolved_root()
@@ -668,7 +668,7 @@ class Orchestrator:
         # Fetch gate-approved issues
         try:
             approved_issues = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug,
+                self.cfg.tracker,
                 [self.cfg.linear_states.gate_approved],
             )
         except Exception as e:
@@ -729,7 +729,7 @@ class Orchestrator:
         # Fetch rework issues
         try:
             rework_issues = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug,
+                self.cfg.tracker,
                 [self.cfg.linear_states.rework],
             )
         except Exception as e:
@@ -882,7 +882,7 @@ class Orchestrator:
         try:
             client = self._ensure_linear_client()
             issues = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug, all_gate_states
+                self.cfg.tracker, all_gate_states
             )
         except Exception as e:
             logger.warning(f"Gate rebuild from Linear failed: {e}")
@@ -968,7 +968,7 @@ class Orchestrator:
         try:
             client = self._ensure_linear_client()
             candidates = await client.fetch_candidate_issues(
-                self.cfg.tracker.project_slug,
+                self.cfg.tracker,
                 self.cfg.active_linear_states(),
             )
         except Exception as e:
@@ -1067,6 +1067,11 @@ class Orchestrator:
         if issue.id in self.running:
             return False
         if issue.id in self.claimed:
+            return False
+        # The fetch already drops skipped tickets; this covers an issue cached
+        # from an earlier tick (retry path) that has since been opted out.
+        skip = (self.cfg.tracker.skip_label or "").strip().lower()
+        if skip and skip in issue.labels:
             return False
 
         # Blocker check for Todo
@@ -1718,7 +1723,7 @@ class Orchestrator:
         try:
             client = self._ensure_linear_client()
             candidates = await client.fetch_candidate_issues(
-                self.cfg.tracker.project_slug,
+                self.cfg.tracker,
                 self.cfg.active_linear_states(),
             )
         except Exception as e:
