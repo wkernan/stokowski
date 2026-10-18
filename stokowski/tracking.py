@@ -43,8 +43,13 @@ def make_gate_comment(
     prompt: str = "",
     rework_to: str | None = None,
     run: int = 1,
+    workflow: str | None = None,
 ) -> str:
-    """Build a structured gate-tracking comment."""
+    """Build a structured gate-tracking comment.
+
+    Carries the workflow for the same reason state comments do: a gate is
+    where an issue waits longest, so it is where a restart most often finds it.
+    """
     payload: dict[str, Any] = {
         "state": state,
         "status": status,
@@ -53,6 +58,8 @@ def make_gate_comment(
     }
     if rework_to:
         payload["rework_to"] = rework_to
+    if workflow:
+        payload["workflow"] = workflow
 
     machine = f"<!-- stokowski:gate {json.dumps(payload)} -->"
 
@@ -121,6 +128,28 @@ def parse_latest_tracking(comments: list[dict]) -> dict[str, Any] | None:
                 pass
 
     return latest
+
+
+def latest_workflow(comments: list[dict]) -> str | None:
+    """The workflow named by the most recent tracking comment that names one.
+
+    Not just the latest comment: gate comments written before they carried
+    the workflow name none, and the pin must survive them.
+    """
+    found: str | None = None
+    for comment in _oldest_first(comments):
+        body = comment.get("body", "")
+        for pattern in (STATE_PATTERN, GATE_PATTERN):
+            match = pattern.search(body)
+            if not match:
+                continue
+            try:
+                name = json.loads(match.group(1)).get("workflow")
+            except json.JSONDecodeError:
+                continue
+            if name:
+                found = name
+    return found
 
 
 def get_last_tracking_timestamp(comments: list[dict]) -> str | None:
