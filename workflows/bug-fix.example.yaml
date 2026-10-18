@@ -64,6 +64,7 @@ states:
     linear_state: review
     rework_to: diagnose
     max_rework: 3
+    requires_pr: false        # no PR exists yet: nothing for the review loop to watch
     transitions:
       approve: implement
 

@@ -57,6 +57,19 @@ def test_a_review_comment_reworks_into_a_stage_that_exists(project, name):
     assert (REPO / stage.prompt).is_file()
 
 
+@pytest.mark.parametrize("name", PR_PIPELINES)
+def test_gates_before_the_pr_exists_are_not_watched_by_the_review_loop(project, name):
+    """research-review parks before implement has opened any PR.
+
+    Left at the default `requires_pr: true`, the poller would hunt for a PR
+    that cannot exist yet, log "no PR found" and paint a warning chip on every
+    ticket at that gate. Only the gates after implement have a PR to watch.
+    """
+    states = project.workflows[name].states
+    assert states["research-review"].requires_pr is False
+    assert states["merge-review"].requires_pr is True
+
+
 def test_the_review_stage_prompt_never_merges():
     text = (REPO / "prompts" / "address-review-comments.example.md").read_text().lower()
     assert "never merge" in text or "never force-push" in text
