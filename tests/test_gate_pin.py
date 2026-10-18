@@ -34,6 +34,9 @@ class FakeLinear:
                           labels=["ai-ready", "stokowski/investigation"])]
         return []
 
+    async def fetch_candidate_issues(self, tracker, states):
+        return [Issue(id="i", identifier="WKE-707", title="t", state="In Progress")]
+
     async def fetch_comments(self, issue_id):
         return list(self.comments)
 
@@ -121,3 +124,47 @@ def test_a_gate_foreign_to_the_workflow_is_left_alone(tmp_path):
 
 def fake_issue():
     return Issue(id="i", identifier="WKE-707", title="t", state="Gate Approved")
+
+
+# ── One worker per issue ────────────────────────────────────────────────────
+# The same approval then started implement twice: the transition scheduled a
+# 1 s retry without claiming the issue, and the dispatch loop later in that
+# tick found it In Progress and dispatched it as well.
+
+
+def test_an_approval_into_an_agent_stage_claims_the_issue(tmp_path):
+    from stokowski.orchestrator import Orchestrator
+
+    fake = FakeLinear(PARKED)
+    shutil.copy(REPO / "workflow.example.yaml", tmp_path / "workflow.yaml")
+    shutil.copytree(REPO / "workflows", tmp_path / "workflows")
+    shutil.copytree(REPO / "prompts", tmp_path / "prompts")
+    o = Orchestrator(workflow_path=tmp_path / "workflow.yaml")
+    assert o._load_workflow() == []
+    o.ledger.path = tmp_path / "ledger.jsonl"
+    o._ensure_linear_client = lambda: fake
+
+    async def scenario():
+        await o._handle_gate_responses()
+        issue = Issue(id="i", identifier="WKE-707", title="t", state="In Progress",
+                      labels=["ai-ready"])
+        assert o._issue_current_state["i"] == "implement"
+        assert "i" in o.claimed and not o._is_eligible(issue)
+        assert "i" in o.retry_attempts            # the retry is the one dispatcher
+        for h in o._retry_timers.values():
+            h.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_retry_never_dispatches_an_issue_already_running(tmp_path):
+    from stokowski.models import RetryEntry, RunAttempt
+
+    o, _ = orchestrator(tmp_path, FakeLinear(PARKED))
+    o.running["i"] = RunAttempt(issue_id="i", issue_identifier="WKE-707")
+    o.retry_attempts["i"] = RetryEntry(issue_id="i", identifier="WKE-707", attempt=0,
+                                       due_at_ms=0)
+    dispatched: list = []
+    o._dispatch = lambda issue, attempt_num=None: dispatched.append(issue)
+    asyncio.run(o._handle_retry("i"))
+    assert dispatched == []
