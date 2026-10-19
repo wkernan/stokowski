@@ -397,6 +397,25 @@ async def run_agent_turn(
             except asyncio.CancelledError:
                 pass
 
+    except asyncio.CancelledError:
+        # The orchestrator cancelled this worker (the issue moved to a gate or
+        # went terminal). Cancelling the task does not stop the child: left
+        # alone, `claude` keeps running and spending after Stokowski has
+        # stopped watching it. Kill it, then let the cancellation propagate so
+        # the worker exit records what the stage spent up to this point.
+        for task in (reader, monitor):
+            task.cancel()
+        proc.kill()
+        if on_pid and proc.pid:
+            on_pid(proc.pid, False)
+        logger.info(
+            f"Turn cancelled issue={issue.identifier} "
+            f"tokens={attempt.total_tokens:,} "
+            f"cost=${attempt.cost_usd:.2f}{' (estimated)' if attempt.cost_estimated else ''}",
+            extra={"linked_to": issue.identifier},
+        )
+        raise
+
     except Exception as e:
         logger.error(f"Runner error issue={issue.identifier}: {e}", extra={"linked_to": issue.identifier})
         proc.kill()

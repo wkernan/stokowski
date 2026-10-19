@@ -31,7 +31,7 @@ stokowski/
   activity_log.py  Append-only per-issue log of every activity entry (full audit trail)
   ledger.py        Append-only run log + approval-rate summary
   linear.py        Linear GraphQL client (httpx async)
-  model_catalogue.py  Known models by provider (data, for the studio dropdown)
+  model_catalogue.py  Known models by provider (studio dropdown) + list prices for live cost estimates
   models.py        Domain models: Issue, RunAttempt, RetryEntry
   # workflows/*.yaml alongside the config hold one pipeline each
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
@@ -286,6 +286,11 @@ is injected into every agent prompt.
 Append-only JSONL at `<workflow-dir>/.stokowski/ledger.jsonl`, recording each
 stage, each gate decision, and each terminal outcome.
 
+A stage that was stopped before it could report (cancelled, or killed by a stall
+or timeout) is still written, with `stopped: true`, the tokens it had used and an
+estimated `cost_usd` (`cost_estimated: true`); `--stats` counts them under
+`stopped_stages` / `stopped_cost_usd` and the totals include them.
+
 Stokowski keeps no database, which is fine for scheduling and useless for the
 question that matters once you are running dozens of tickets a week: is this
 working, and for what? A Linear issue holds one run's report; it cannot tell
@@ -437,6 +442,24 @@ Three things about this shape bite repeatedly:
   via `--resume` must accumulate; assigning reports only the final turn.
 
 `total_cost_usd` is authoritative — prefer it over computing cost from tokens.
+
+**Live usage.** Until the `result` event arrives, `events.py` folds each
+`assistant` message's `usage` into the `RunAttempt` so tokens and cost move during
+a stage and a stopped stage keeps what it spent:
+
+- Claude Code emits one `assistant` event per content block with the same
+  `message.id` and `usage`; count each message id once (`RunAttempt.live_messages`).
+- Input and cache tokens summed over distinct messages equal the `result` totals;
+  the assistant event's `output_tokens` is the count at the start of the message,
+  so live output is a floor.
+- `cost_usd` while running = the last result's reported spend (minus
+  `session_cost_baseline`) + an estimate priced from `model_catalogue.PRICES_PER_MTOK`
+  (`cost_estimated` is True). The `result` backs the live figures out and replaces
+  them; never add both. A model with no price gets tokens and no estimate.
+- A cancelled stage (and a stalled/timed-out one with no report) writes a ledger
+  entry with `stopped: true` via `Orchestrator._record_stopped_stage`; the totals
+  take the attempt's tokens and cost at `_on_worker_exit` as for any attempt.
+
 
 Exit code 0 = success, non-zero = failure (stderr captured). Note that
 `is_error: true` on a `result` event (e.g. `error_max_turns`) still exits 0, so

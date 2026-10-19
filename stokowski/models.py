@@ -76,6 +76,8 @@ class RunAttempt:
     last_message: str = ""
     completed_at: datetime | None = None
     state_name: str | None = None       # current internal state machine state
+    run: int = 1                        # which run of that state this is (ledger key)
+    ledger_recorded: bool = False       # this attempt already has its ledger stage entry
 
     # ── Usage ────────────────────────────────────────────────────────────
     # Cache tokens are tracked separately because they dominate real runs and
@@ -95,6 +97,17 @@ class RunAttempt:
     cost_usd: float = 0.0
     cost_usd_reported: float = 0.0
     session_cost_baseline: float = 0.0
+    # True while `cost_usd` includes a live estimate that no `result` event has
+    # replaced yet: the invocation in flight, or one that was stopped (cancelled,
+    # stalled, timed out) before it could report. The estimate is priced from
+    # `model_catalogue.PRICES_PER_MTOK`; the result event's figure supersedes it.
+    cost_estimated: bool = False
+    # Usage of the invocation in flight, keyed by the API message id and folded
+    # into the token fields as `assistant` events arrive (a message is emitted
+    # once per content block, all carrying the same usage). The `result` event
+    # reports the invocation's usage authoritatively, so it backs these out and
+    # replaces them. Internal to `events.py`.
+    live_messages: dict[str, dict[str, Any]] = field(default_factory=dict)
     model: str | None = None
     model_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
