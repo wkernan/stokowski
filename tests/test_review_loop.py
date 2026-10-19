@@ -137,6 +137,15 @@ def test_the_review_trusts_ci_instead_of_rerunning_it():
     assert "request-changes" in text and "open_questions" in text
 
 
+def test_the_review_runs_each_check_once():
+    """WKE-714: the review re-ran both red-proofs twice, once to check them and
+    once to capture evidence, and cost 2.2x the implement stage on a 117-line
+    test-only diff. One run, teed into the artifacts directory, does both."""
+    text = (REPO / "prompts" / "review.example.md").read_text(encoding="utf-8")
+    assert "Run each check once" in text and "$STOKOWSKI_ARTIFACTS" in text
+    assert "not every one" in text
+
+
 # ── Headless runs don't get tools that wait on a person or a timer ──────────
 
 

@@ -269,6 +269,17 @@ def test_clone_hook_keeps_enough_history_to_diff(cfg):
     assert "--depth 1" not in after_create and "--depth=1" not in after_create
 
 
+def test_clone_hook_sets_the_agents_git_identity(cfg):
+    """Without one the agent's first commit fails, and it invents an identity.
+
+    On WKE-714 (2026-10-19) the agent set the repo owner's own email and a
+    guessed name, so its commits read as the human's.
+    """
+    after_create = cfg.hooks.after_create or ""
+    assert "git config user.name" in after_create
+    assert "git config user.email" in after_create
+
+
 def test_before_run_hook_cannot_fail_a_turn(cfg):
     """A non-zero exit here fails the turn before the agent launches.
 
