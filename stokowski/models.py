@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -100,6 +101,12 @@ class RunAttempt:
     # ── Activity ─────────────────────────────────────────────────────────
     activity: deque[ActivityEntry] = field(
         default_factory=lambda: deque(maxlen=ACTIVITY_MAXLEN)
+    )
+    # Called with every entry as it is recorded, so a durable copy survives the
+    # deque's cap and the end of the run (see activity_log.py). Set by the
+    # orchestrator at dispatch; None means in-memory only.
+    on_activity: Callable[[ActivityEntry], None] | None = field(
+        default=None, repr=False, compare=False
     )
     tool_counts: dict[str, int] = field(default_factory=dict)
     tool_call_count: int = 0

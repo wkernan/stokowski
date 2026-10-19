@@ -224,6 +224,7 @@ Prompt authors never need to write "move the issue to Human Review when done" â€
 - Pending gates view showing issues waiting for human review
 - Aggregate metrics: total tokens used, uptime, running/queued counts
 - Auto-refreshes every 3 seconds
+- Audit trail: `GET /api/v1/<ISSUE>/activity` returns every tool call, text snippet and error an issue's agents produced, across all runs and after they end (`?state=implement&run=1` to narrow). The cards and `GET /api/v1/<ISSUE>` show only the last 40; the full log is `.stokowski/activity/<ISSUE>.jsonl` beside the ledger
 
 </details>
 
@@ -896,6 +897,7 @@ prompts/       â†’  Jinja2 stage prompt files
 | `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
 | `stokowski/runner.py` | Multi-runner CLI integration (Claude Code + Codex), stream-json parser |
 | `stokowski/workspace.py` | Per-issue workspace lifecycle and hooks |
+| `stokowski/activity_log.py` | Per-issue JSONL of every activity entry (full audit trail) |
 | `stokowski/web.py` | Optional FastAPI dashboard |
 | `stokowski/main.py` | CLI entry point, keyboard handler |
 

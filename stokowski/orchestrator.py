@@ -43,6 +43,7 @@ from . import artifacts as artifacts_mod
 from . import report as report_mod
 from .events import summarise_tool_input
 from .github import CommentRef, GitHubClient, GitHubPoller, PRState, summarise_feedback
+from .activity_log import ActivityLog
 from .ledger import Ledger
 from .workspace import ensure_workspace, remove_workspace
 
@@ -102,6 +103,9 @@ class Orchestrator:
         # first tick, and `cfg` asserts on that. The ledger path is derived
         # from the workflow file alone, which is known at construction.
         self.ledger = Ledger.for_workflow(Path(self.workflow_path))
+        # The full activity trail of every run, beside the ledger; the
+        # in-memory trail is capped for the dashboard and gone after the run.
+        self.activity_log = ActivityLog.beside(self.ledger)
 
         # Internal
         self._linear: LinearClient | None = None
@@ -1446,6 +1450,11 @@ class Orchestrator:
             issue_identifier=issue.identifier,
             attempt=attempt_num,
             state_name=state_name,
+        )
+        attempt.on_activity = self.activity_log.sink(
+            issue, attempt,
+            run=lambda: self._issue_state_runs.get(issue.id, 1),
+            project=self.project_name,
         )
 
         # Session handling

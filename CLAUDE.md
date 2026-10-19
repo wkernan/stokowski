@@ -28,6 +28,7 @@ stokowski/
   artifacts.py     Agent evidence: collection, git isolation, cleanup
   config.py        workflow.yaml parser + typed config dataclasses
   events.py        stream-json event parsing -> RunAttempt state
+  activity_log.py  Append-only per-issue log of every activity entry (full audit trail)
   ledger.py        Append-only run log + approval-rate summary
   linear.py        Linear GraphQL client (httpx async)
   model_catalogue.py  Known models by provider (data, for the studio dropdown)
@@ -227,6 +228,24 @@ rate limits and results all append to `attempt.activity`, a bounded deque
 Successful tool results are deliberately NOT recorded — a real run makes
 hundreds, and they carry no information. Only failures are.
 
+The deque is the dashboard's view, and `get_state_snapshot()` trims it again to
+the last 40. It is not an audit trail (a 154-tool-call implement stage kept 40,
+and the entries vanished with the run). `_record()` therefore also calls
+`attempt.on_activity`, which the orchestrator sets at dispatch to an
+`ActivityLog` sink (see `activity_log.py`).
+
+### activity_log.py
+Append-only JSONL of every activity entry, one file per issue, at
+`<ledger dir>/activity/<ISSUE>.jsonl` (so `<workflow-dir>/.stokowski/activity/`
+by default; it follows the ledger's location). Each line is `ActivityEntry.to_dict()`
+plus `issue`, `project`, `state`, `run` and `attempt`. State and run are read
+when the line is written, because the state is resolved after the sink is built.
+
+Same rules as the ledger: write failures are logged, never raised; a torn line
+is skipped on read. The in-memory deque and the 40-entry snapshot are unchanged.
+`ActivityLog.read(issue, state=, run=)` returns `None` when nothing was ever
+recorded for the issue (a 404 on the endpoint), `[]` when filters exclude all.
+
 `display_tool_name()` shortens `mcp__playwright__browser_take_screenshot` to
 `playwright:browser_take_screenshot` so the argument stays visible.
 
@@ -316,7 +335,11 @@ declared before it.
 Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /` — HTML dashboard (IBM Plex Mono font, dark theme, amber accents)
 - `GET /api/v1/state` — full JSON snapshot from `orch.get_state_snapshot()`
-- `GET /api/v1/{issue_identifier}` — single issue state
+- `GET /api/v1/{issue_identifier}` — single issue state (running, retrying or at a gate; `activity` is capped at the last 40)
+- `GET /api/v1/{issue_identifier}/activity` — the full persisted activity log for the
+  issue across all its runs, oldest first, each entry tagged `state`, `run`, `attempt`.
+  Works after the stage has ended. Optional `?state=implement&run=1`. Returns
+  `{issue_identifier, count, entries}`; 404 `activity_not_found` if nothing was recorded.
 - `POST /api/v1/refresh` — triggers `orch._tick()` immediately
 
 Dashboard JS polls `/api/v1/state` every 3s and updates the DOM without page reload.

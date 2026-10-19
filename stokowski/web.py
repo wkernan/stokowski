@@ -10,6 +10,8 @@ from pathlib import Path
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
+from .activity_log import ActivityLog
+
 if TYPE_CHECKING:
     from .orchestrator import MultiOrchestrator
 
@@ -2024,6 +2026,32 @@ def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
             {"error": {"code": "issue_not_found", "message": f"Unknown: {issue_identifier}"}},
             status_code=404,
         )
+
+    @app.get("/api/v1/{issue_identifier}/activity")
+    async def api_issue_activity(
+        issue_identifier: str, state: str | None = None, run: int | None = None
+    ):
+        """Every activity entry ever persisted for an issue, oldest first.
+
+        Unlike `/api/v1/<ISSUE>` this is not capped and does not need the issue
+        to be running: it reads the append-only log, so it also answers after
+        the stage has ended. `?state=` and `?run=` narrow it to one stage run.
+        """
+        log = ActivityLog.for_workflow(Path(orchestrator.workflow_path))
+        entries = await asyncio.to_thread(
+            log.read, issue_identifier, state=state, run=run
+        )
+        if entries is None:
+            return JSONResponse(
+                {"error": {"code": "activity_not_found",
+                           "message": f"No recorded activity for: {issue_identifier}"}},
+                status_code=404,
+            )
+        return JSONResponse({
+            "issue_identifier": issue_identifier,
+            "count": len(entries),
+            "entries": entries,
+        })
 
     @app.post("/api/v1/refresh")
     async def api_refresh():
