@@ -392,3 +392,34 @@ def test_the_global_prompt_forbids_guessing_the_reader():
     assert "who you are talking to" in text
     for concept in ("do not know who will read", "colleagues mentioned in documentation"):
         assert concept in text, f"global prompt does not cover {concept!r}"
+
+
+# ── The real context reaches the agent ───────────────────────────────────────
+
+
+@pytest.mark.parametrize("path", STAGE_PROMPTS, ids=lambda p: p.name)
+def test_stage_prompts_render_the_ticket_through_the_real_context(path, issue):
+    """Render each stage prompt the way production does, not with a hand-made dict.
+
+    test_prompt_is_valid_jinja passes its own {"issue": {...}}, which hid that
+    build_template_context never provided an `issue` object: every
+    `{{ issue.description }}` rendered empty and agents built from the title.
+    """
+    from stokowski.prompt import build_template_context
+
+    body = load_prompt_file(path.name, PROMPTS)
+    rendered = render_template(body, build_template_context(issue, "implement", 1, 1, None))
+    if "issue.description" in body:
+        assert issue.description in rendered, f"{path.name} lost the ticket description"
+        assert "No description provided" not in rendered
+    if "issue.title" in body:
+        assert issue.title in rendered, f"{path.name} lost the ticket title"
+
+
+def test_assembled_implement_prompt_carries_the_description(cfg, issue):
+    prompt = assemble_prompt(
+        cfg=cfg, workflow_dir=str(WORKFLOW.parent), issue=issue,
+        state_name="implement", state_cfg=cfg.states["implement"], run=1,
+    )
+    assert issue.description in prompt
+    assert issue.title in prompt

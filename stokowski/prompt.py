@@ -106,6 +106,21 @@ def build_template_context(
         A flat dict suitable for Jinja2 rendering.
     """
     return {
+        # The stage prompts read `issue.title`, `issue.description` and the
+        # rest as attributes. Without this key every one of those rendered
+        # empty under _SilentUndefined, so agents were told "No description
+        # provided." and built from the identifier alone.
+        "issue": {
+            "id": issue.id,
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "description": issue.description or "",
+            "url": issue.url or "",
+            "priority": issue.priority,
+            "state": issue.state,
+            "branch_name": issue.branch_name or "",
+            "labels": ", ".join(issue.labels),
+        },
         "issue_id": issue.id,
         "issue_identifier": issue.identifier,
         "issue_title": issue.title,

@@ -6,6 +6,18 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agents now see the ticket's title and description.** Every stage prompt reads
+  `issue.title`, `issue.description` and friends, but `build_template_context`
+  provided only flat `issue_*` keys, and `_SilentUndefined` rendered the missing
+  `issue` object as empty. Every stage - investigate, ground-check, implement,
+  review - was told "No description provided." and saw a blank title line. On
+  WKE-713 the implement agent built from the identifier and title alone and
+  missed six of seven written decisions. The context now carries an `issue`
+  mapping; a new test renders every stage prompt through the real context
+  builder (the old test passed its own hand-made dict, which hid the bug).
+
 ### Added
 
 - **Headless runs can't use tools that wait on a person or a timer.**
