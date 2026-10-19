@@ -31,7 +31,14 @@ from .models import Issue, RetryEntry, RunAttempt
 from .pool import ConcurrencyPool
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
-from .tracking import make_gate_comment, make_state_comment, latest_workflow, parse_latest_tracking
+from .tracking import (
+    latest_workflow,
+    make_gate_comment,
+    make_note_comment,
+    make_state_comment,
+    note_already_posted,
+    parse_latest_tracking,
+)
 from . import artifacts as artifacts_mod
 from . import report as report_mod
 from .events import summarise_tool_input
@@ -124,6 +131,9 @@ class Orchestrator:
         # the worker path with the same run. COG-368 got three identical
         # "Entering state: implement" comments in 1.7 seconds.
         self._announced_states: set[tuple[str, str, int]] = set()
+        # Issues in Rework that were told why they cannot be reworked. Cleared
+        # when the issue leaves Rework, so the note is once per parking.
+        self._rework_unresolved_noted: set[str] = set()
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
         # Eligible-but-not-dispatched (queue panel data, refreshed each tick)
@@ -954,10 +964,14 @@ class Orchestrator:
             logger.warning(f"Failed to fetch rework issues: {type(e).__name__}: {e}")
             rework_issues = []
 
+        self._rework_unresolved_noted &= {i.id for i in rework_issues}
+
         for issue in rework_issues:
             if issue.id in self.running or issue.id in self.claimed:
                 continue
 
+            comments: list[dict] = []
+            tracking = None
             gate_state = self._pending_gates.pop(issue.id, None)
             if not gate_state or issue.id not in self._issue_workflow:
                 comments = await client.fetch_comments(issue.id)
@@ -1025,15 +1039,122 @@ class Orchestrator:
                     extra={"linked_to": issue.identifier},
                 )
             else:
-                # A ticket parked in Rework with no resolvable gate goes nowhere
-                # and nothing says so. Silence here is what let the comment
-                # ordering bug sit unnoticed across every gate.
+                await self._rework_without_gate(issue, comments, tracking)
+
+    def _gate_cap_after(self, issue: Issue, state_name: str) -> tuple[str, int | None]:
+        """The first gate downstream of an agent state, and its `max_rework`.
+
+        A manually parked issue has no gate to read the cap from, so it takes
+        the one it was heading for: following transitions through agent states
+        until a gate is reached. ("", None) when none is reachable.
+        """
+        states = self._states_for(issue)
+        seen: set[str] = set()
+        queue = [state_name]
+        while queue:
+            cfg = states.get(queue.pop(0))
+            if cfg is None or cfg.name in seen:
+                continue
+            seen.add(cfg.name)
+            if cfg.type == "gate":
+                return cfg.name, cfg.max_rework
+            queue.extend(cfg.transitions.values())
+        return "", None
+
+    async def _rework_without_gate(
+        self, issue: Issue, comments: list[dict], tracking: dict | None
+    ) -> None:
+        """Rework an issue that sits in the rework state with no waiting gate.
+
+        An operator who stops a running stage by moving the ticket to the
+        review state, then to Rework, leaves a `state` tracking comment as the
+        latest entry, not a waiting gate. Resume the agent stage it was in, as
+        a rework run, under the cap of the gate that stage leads to. With no
+        agent stage to resume, say so once instead of skipping in silence.
+        """
+        client = self._ensure_linear_client()
+        states = self._states_for(issue)
+        workflow = self._workflow_name_for(issue)
+
+        # The stage to run again: the one the latest state comment entered, or
+        # the target of a rework decision that never got to run.
+        state_name = ""
+        if tracking and tracking.get("type") == "state":
+            state_name = tracking.get("state", "")
+        elif tracking and tracking.get("type") == "gate" and tracking.get("status") == "rework":
+            state_name = tracking.get("rework_to", "")
+        state_cfg = states.get(state_name)
+
+        if state_cfg is None or state_cfg.type != "agent":
+            if tracking and tracking.get("type") == "gate" and tracking.get("status") == "escalated":
+                # Max rework was already spent and said so on the issue.
                 logger.warning(
                     f"Issue {issue.identifier} is in '{self.cfg.linear_states.rework}' "
-                    f"but no gate could be resolved from its tracking comments — "
-                    f"it will not advance",
+                    f"after max rework was exceeded — it will not advance",
                     extra={"linked_to": issue.identifier},
                 )
+                return
+            logger.warning(
+                f"Issue {issue.identifier} is in '{self.cfg.linear_states.rework}' "
+                f"but no gate or agent stage could be resolved from its tracking "
+                f"comments — it will not advance",
+                extra={"linked_to": issue.identifier},
+            )
+            if issue.id in self._rework_unresolved_noted or note_already_posted(
+                comments, "rework-unresolved"
+            ):
+                self._rework_unresolved_noted.add(issue.id)
+                return
+            self._rework_unresolved_noted.add(issue.id)
+            await client.post_comment(
+                issue.id,
+                make_note_comment(
+                    "rework-unresolved",
+                    f"This issue is in **{self.cfg.linear_states.rework}**, but it has no "
+                    f"waiting gate and no earlier stage recorded on it, so there is "
+                    f"nothing to send back for rework. Move it to "
+                    f"**{self.cfg.linear_states.todo}** to start it again from the "
+                    f"beginning.",
+                ),
+            )
+            return
+
+        run = self._issue_state_runs.get(issue.id) or tracking.get("run", 1)
+        gate_name, max_rework = self._gate_cap_after(issue, state_name)
+        if max_rework is not None and run >= max_rework:
+            await client.post_comment(
+                issue.id,
+                make_gate_comment(
+                    state=gate_name, status="escalated", run=run, workflow=workflow
+                ),
+            )
+            logger.warning(
+                f"Max rework exceeded issue={issue.identifier} "
+                f"gate={gate_name} run={run} max={max_rework}",
+                extra={"linked_to": issue.identifier},
+            )
+            return
+
+        new_run = run + 1
+        self._issue_state_runs[issue.id] = new_run
+        self._issue_current_state[issue.id] = state_name
+        await self._announce_state(issue, state_name, new_run)
+
+        active_state = self.cfg.linear_states.active
+        moved = await client.update_issue_state(issue.id, active_state)
+        if moved:
+            issue.state = active_state
+        else:
+            logger.warning(
+                f"Failed to move {issue.identifier} to active after rework",
+                extra={"linked_to": issue.identifier},
+            )
+        self._last_issues[issue.id] = issue
+        logger.info(
+            f"Rework without gate issue={issue.identifier} "
+            f"state={state_name} run={new_run}",
+            extra={"linked_to": issue.identifier},
+        )
 
     async def _evict_terminal_gates(self):
         """Evict gate entries for tickets that have moved to terminal states.

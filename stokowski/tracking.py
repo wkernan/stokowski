@@ -12,6 +12,7 @@ logger = logging.getLogger("stokowski.tracking")
 
 STATE_PATTERN = re.compile(r"<!-- stokowski:state ({.*?}) -->")
 GATE_PATTERN = re.compile(r"<!-- stokowski:gate ({.*?}) -->")
+NOTE_PATTERN = re.compile(r"<!-- stokowski:note ({.*?}) -->")
 
 
 def make_state_comment(state: str, run: int = 1, workflow: str | None = None) -> str:
@@ -85,6 +86,39 @@ def make_gate_comment(
         human = f"**[Stokowski]** Gate **{state}** status: {status}"
 
     return f"{machine}\n\n{human}"
+
+
+def make_note_comment(kind: str, text: str) -> str:
+    """Build an explanatory comment Stokowski posts once for a person to read.
+
+    Not state tracking: `parse_latest_tracking` ignores it, and
+    `get_comments_since` skips it like every other `stokowski:` comment, so it
+    never reaches an agent as feedback. The `kind` marker is what lets a later
+    tick (or a restart) see the note was already posted.
+    """
+    payload = {"kind": kind, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return f"<!-- stokowski:note {json.dumps(payload)} -->\n\n**[Stokowski]** {text}"
+
+
+def note_already_posted(comments: list[dict], kind: str) -> bool:
+    """True if a `kind` note exists and no state or gate entry came after it.
+
+    A newer tracking comment means the issue has moved on since, so the same
+    problem hitting it again deserves a fresh note.
+    """
+    posted = False
+    for comment in _oldest_first(comments):
+        body = comment.get("body", "")
+        note = NOTE_PATTERN.search(body)
+        if note:
+            try:
+                if json.loads(note.group(1)).get("kind") == kind:
+                    posted = True
+            except json.JSONDecodeError:
+                pass
+        elif STATE_PATTERN.search(body) or GATE_PATTERN.search(body):
+            posted = False
+    return posted
 
 
 def _oldest_first(comments: list[dict]) -> list[dict]:

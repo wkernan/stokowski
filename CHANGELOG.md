@@ -20,6 +20,15 @@ All notable changes to Stokowski are documented here.
 
 ### Fixed
 
+- **An issue moved to Rework by hand now resumes.** An operator who stopped a
+  running stage by moving the ticket to Human Review, then to Rework, got
+  nothing for minutes: the rework handler acted only on a waiting gate, and the
+  latest tracking comment was the agent stage's `state` entry, so the issue was
+  skipped with a log line only (WKE-713, 2026-10-19). With no waiting gate,
+  Stokowski now runs that stage again as a rework run (run + 1) under the
+  `max_rework` of the gate the stage leads to, or posts the same `escalated`
+  comment. If no agent stage can be found it posts one Linear comment saying so
+  and to move the ticket to Todo - once per parking, not every poll tick.
 - **Agents now see the ticket's title and description.** Every stage prompt reads
   `issue.title`, `issue.description` and friends, but `build_template_context`
   provided only flat `issue_*` keys, and `_SilentUndefined` rendered the missing
