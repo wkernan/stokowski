@@ -116,6 +116,8 @@ routes `investigate` straight to a gate fails the suite.
 
 **Gate protocol:** When an agent completes a state that transitions to a gate, Stokowski moves the issue to the gate's Linear state and posts a structured tracking comment. Humans approve or request rework via Linear state changes. On approval, Stokowski advances to the gate's `approve` transition target. On rework, it returns to the gate's `rework_to` state.
 
+**Rework without a waiting gate:** An operator can stop a running stage by moving the issue to the review state by hand, so its latest tracking comment is a `state` entry, not a waiting gate. When such an issue is moved to the rework state, `_rework_without_gate` runs that agent stage again as a rework run (run + 1), capped by the `max_rework` of the first gate the stage leads to (an `escalated` gate comment when spent). If no agent stage is recorded (no tracking at all, or an escalated gate), it never stays silent about it: it posts one `stokowski:note` comment (`kind: rework-unresolved`) telling the operator to move the issue to Todo, and not again until a newer state or gate entry appears. No ledger gate verdict is recorded, since no gate was judged.
+
 **Structured comment tracking:** State transitions and gate decisions are persisted as HTML comments on Linear issues (`<!-- stokowski:state {...} -->` and `<!-- stokowski:gate {...} -->`). These enable crash recovery and provide context for rework runs.
 
 ### Workspace isolation
@@ -351,6 +353,7 @@ Three-layer prompt assembly for state machine workflows. Main entry point is `as
 State machine tracking via structured Linear comments:
 - `make_state_comment(state, run)` — builds state entry comment with hidden JSON (`<!-- stokowski:state {...} -->`) + human-readable text
 - `make_gate_comment(state, status, prompt, rework_to, run)` — builds gate status comment (waiting/approved/rework/escalated)
+- `make_note_comment(kind, text)` / `note_already_posted(comments, kind)` — a one-off explanatory comment (`<!-- stokowski:note {...} -->`) for humans; not tracking, and skipped by `get_comments_since`; dedupes across ticks and restarts
 - `parse_latest_tracking(comments)` — scans comments (oldest-first) to find latest state or gate tracking entry for crash recovery
 - `get_last_tracking_timestamp(comments)` — finds the timestamp of the latest tracking comment
 - `get_comments_since(comments, since_timestamp)` — filters to non-tracking comments after a given timestamp (used to gather review feedback for rework runs)
