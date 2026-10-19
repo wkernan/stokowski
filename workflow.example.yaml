@@ -131,6 +131,10 @@ hooks:
   after_create: |
     set -e
     git clone --filter=blob:none git@github.com:your-org/your-repo.git .
+    # The identity the agents commit as. Without one the first commit fails
+    # and the agent invents an identity, sometimes a human's.
+    git config user.name "your-bot"
+    git config user.email "your-bot@example.com"
     # Use the package manager the project actually declares. npm fails outright
     # on a pnpm/yarn workspace ("Unsupported URL Type: workspace:").
     npm ci

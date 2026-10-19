@@ -27,7 +27,9 @@ the implementer missed — not to rubber-stamp the PR.
    ```
 2. Read the issue description and any acceptance criteria.
 3. For each changed file, read the surrounding code (not just the diff) to
-   understand the full context.
+   understand the full context. Read the symbols the diff calls or changes,
+   not every module they live in: a whole file is worth reading when the diff
+   changes it.
 4. **Check the diff against the project's known agent mistakes.** Most repos
    that run agents keep a list — look for `.claude/rules/agent-pitfalls.md`,
    `AGENTS.md`, a "pitfalls"/"gotchas" doc, or a lessons-learned section in
@@ -52,7 +54,12 @@ the implementer missed — not to rubber-stamp the PR.
    did, on a clean machine. Spend that time on what CI cannot do:
    - **Prove the new tests catch the bug.** Break the change on purpose (revert
      the fix, swap the condition), run only the covering specs, confirm they
-     fail, restore it.
+     fail, restore it. If the implementer already pasted red-proofs, reproduce
+     the one that carries the ticket's central claim, not every one.
+   - **Run each check once.** Write its output straight into
+     `$STOKOWSKI_ARTIFACTS` as you run it (`... 2>&1 | tee
+     "$STOKOWSKI_ARTIFACTS/red-proof.txt"`), so the evidence and the check are
+     the same run, never a second run for the record.
    - Run the covering specs for anything you suspect.
 
    Run a full gate locally only when CI hasn't run on the head commit or a
@@ -62,7 +69,9 @@ the implementer missed — not to rubber-stamp the PR.
    survives and from the run report on the Linear issue:
    - Did they verify which data source they read, or assume it?
    - Does every claim have a source you can independently check?
-   - Re-run their verification commands. Do you get what they reported?
+   - Re-run the verification that carries their central claim. Do you get
+     what they reported? Check the rest against the output they pasted, and
+     re-run one only when the paste doesn't support it.
    - Does the conclusion actually follow from the evidence, or does it merely
      sound like it does?
 

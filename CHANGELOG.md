@@ -8,6 +8,16 @@ All notable changes to Stokowski are documented here.
 
 ### Changed
 
+- **The review runs each check once.** On WKE-714 (a 117-line, test-only diff) the
+  `code-review` stage cost $2.27 against implement's $1.04: it re-ran both of the
+  implementer's red-proofs twice, once to check them and once to capture evidence,
+  and read three modules whole. The review prompt now reproduces the red-proof
+  that carries the central claim, tees each check's output straight into
+  `$STOKOWSKI_ARTIFACTS`, checks the other claims against the pasted output, and
+  reads the symbols a diff touches rather than every module they live in.
+- **The example clone hook sets a git identity.** Without one an agent's first
+  commit fails and it invents an identity; on WKE-714 it used the repo owner's own
+  email.
 - **Follow-up build stages start fresh, and implement stops doing the reviewer's
   job.** In the build pipeline `implement` and `address-review-comments` now run
   with `session: fresh`: resuming the implementer's session re-sent the whole
