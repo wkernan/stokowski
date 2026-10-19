@@ -20,6 +20,14 @@ All notable changes to Stokowski are documented here.
 
 ### Added
 
+- **The full activity trail of every run is kept, and served.** Each activity
+  entry (tool calls, assistant text, tool errors, results) is appended to
+  `.stokowski/activity/<ISSUE>.jsonl` beside the ledger, tagged with state, run
+  and attempt, and `GET /api/v1/<ISSUE>/activity` returns it all (optional
+  `?state=implement&run=1`), during a run and after it ends. Auditing WKE-713
+  showed `GET /api/v1/<ISSUE>` caps `activity` at 40: the implement stage made
+  154 tool calls, so 114 were lost, and when the stage ended the rest went too.
+  The in-memory trail and the dashboard's 40-entry snapshot are unchanged.
 - **Headless runs can't use tools that wait on a person or a timer.**
   `claude.disallowed_tools` (default: AskUserQuestion, EnterPlanMode, ScheduleWakeup,
   Monitor, CronCreate/Delete/List) goes to `--disallowedTools`; set `[]` to allow

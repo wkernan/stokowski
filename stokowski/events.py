@@ -97,6 +97,11 @@ def _record(attempt: RunAttempt, kind: str, label: str, detail: str = "", status
         status=status,
     )
     attempt.activity.append(entry)
+    if attempt.on_activity is not None:
+        try:
+            attempt.on_activity(entry)
+        except Exception as e:  # persisting must never break event parsing
+            logger.warning(f"Activity sink failed: {e}")
 
     # `last_message` is the one-line headline shown in the dashboard and CLI.
     if kind == "tool":
