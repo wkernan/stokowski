@@ -57,6 +57,7 @@ states:
     session: fresh                          # cannot inherit the implementer's assumptions
     transitions:
       complete: merge-review
+      request-changes: implement   # fixable findings go straight back, once (max_auto_loops)
 
   # The PR is the gate and you merge it: merging ends the ticket, a review
   # comment on the PR sends it to address-review-comments, and Gate Approved

@@ -8,6 +8,31 @@ All notable changes to Stokowski are documented here.
 
 ### Added
 
+- **Code review sends fixable findings straight back, once.** A `request-changes`
+  verdict now routes code-review → implement in every shipped pipeline, and the
+  ticket reaches the human gate after the re-review. Agent-to-agent verdict
+  loops are capped per state by `max_auto_loops` (default 1); exits into a gate
+  are never capped. Review verdicts are now: `approve`; `request-changes`
+  (agent-fixable only); `blocked` (needs the owner, with `open_questions`).
+- **The previous stage's report is handed to the next.** Reports are machine
+  comments, so the comment window dropped them; the newest report from another
+  stage (up to 8,000 chars) is now in the prompt. The implementer sees the
+  review's findings, and the reviewer sees what the implementer claims.
+- **"Reading economically" rules in every prompt.** Search before reading,
+  read big files by range, don't re-read, keep test output short, and use a
+  subagent for broad exploration. On WKE-707 the rework's context grew to
+  345k tokens; 99% of its 33.8M tokens were cache re-reads.
+
+### Changed
+
+- **Reviews use CI's results.** The review prompt reads `gh pr checks` and
+  re-runs a gate only when CI hasn't run or failed. Its time goes to breaking
+  the change on purpose to prove the new tests catch it. WKE-707's review
+  spent 7 of its 21 minutes re-running checks CI had just passed.
+- **An `inherit` stage never resumes a `fresh` stage's session.** The
+  implementer coming back from review continues its own session, not the
+  reviewer's.
+
 - **`skills/stokowski-ticket`, a Claude Code skill for writing tickets Stokowski
   builds.** It covers route labels (and when research is redundant), research
   done before filing in place of a ground-check stage, settled decisions

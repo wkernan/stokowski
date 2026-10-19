@@ -102,6 +102,7 @@ class Orchestrator:
         self._retry_timers: dict[str, asyncio.TimerHandle] = {}
         self._child_pids: set[int] = set()  # Track claude subprocess PIDs
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
+        self._auto_loops: dict[tuple[str, str, str], int] = {}
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
         self._last_issues: dict[str, Issue] = {}
@@ -789,6 +790,7 @@ class Orchestrator:
             self._issue_current_state.pop(issue.id, None)
             self._issue_state_runs.pop(issue.id, None)
             self._announced_states = {k for k in self._announced_states if k[0] != issue.id}
+            self._auto_loops = {k: v for k, v in self._auto_loops.items() if k[0] != issue.id}
             self._pending_gates.pop(issue.id, None)
             self._last_session_ids.pop(issue.id, None)
             self.claimed.discard(issue.id)
@@ -816,6 +818,32 @@ class Orchestrator:
             # share one workspace.
             self.claimed.add(issue.id)
             self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
+
+    def _cap_auto_loop(self, issue: Issue, state_cfg, transition: str) -> str:
+        """Fall back to `complete` once an agent-to-agent verdict loop is spent.
+
+        A reviewer requesting changes sends the work straight back to the
+        implementer, which saves a human round trip for fixable findings. Left
+        uncapped, two agents that disagree would loop forever; after
+        `max_auto_loops` the ticket goes on to the human gate instead. The count
+        lives in memory, so a restart can allow at most one extra loop.
+        """
+        if transition == "complete":
+            return transition
+        target = self._states_for(issue).get(state_cfg.transitions.get(transition, ""))
+        if target is None or target.type != "agent":
+            return transition
+        key = (issue.id, state_cfg.name, transition)
+        taken = self._auto_loops.get(key, 0)
+        if taken >= state_cfg.max_auto_loops:
+            logger.info(
+                f"{issue.identifier}: '{transition}' from {state_cfg.name} already taken "
+                f"{taken}x (max_auto_loops={state_cfg.max_auto_loops}); continuing to the gate",
+                extra={"linked_to": issue.identifier},
+            )
+            return "complete"
+        self._auto_loops[key] = taken + 1
+        return transition
 
     async def _announce_state(self, issue, state: str, run: int) -> None:
         """Post the entering-a-state comment, at most once per (state, run)."""
@@ -1862,7 +1890,11 @@ class Orchestrator:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
             self.total_seconds_running += elapsed
 
-        if attempt.session_id:
+        # A fresh-session stage (an independent reviewer) is never the one a
+        # later `inherit` stage resumes: the implementer coming back to fix the
+        # review's findings must continue its own session, not the reviewer's.
+        fresh = (self._states_for(issue).get(attempt.state_name or "") or None)
+        if attempt.session_id and not (fresh and fresh.session == "fresh"):
             self._last_session_ids[issue.id] = attempt.session_id
 
         completed_at = datetime.now(timezone.utc)
@@ -1880,7 +1912,9 @@ class Orchestrator:
                 # State machine mode: the agent may pick a declared exit by
                 # its verdict (implement → `needs-context`); anything else,
                 # including no report, takes the default `complete`.
-                transition = choose_transition(states[attempt.state_name], attempt.outcome)
+                state_cfg = states[attempt.state_name]
+                transition = choose_transition(state_cfg, attempt.outcome)
+                transition = self._cap_auto_loop(issue, state_cfg, transition)
                 if transition != "complete":
                     logger.info(
                         f"{issue.identifier} chose exit '{transition}' from {attempt.state_name}",

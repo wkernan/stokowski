@@ -294,6 +294,11 @@ class StateConfig:
     requires_pr: bool = True
     # Gate only: what the human should do, shown in the gate's Linear comment.
     description: str | None = None
+    # Agent only: how many times per issue a verdict exit may send the work to
+    # another *agent* state (code-review `request-changes` -> implement) before
+    # the state falls back to `complete` and a human sees it. Exits into a gate
+    # are never capped: a person is already in that loop.
+    max_auto_loops: int = 1
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
 
@@ -605,6 +610,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         max_rework=raw.get("max_rework"),
         requires_pr=bool(raw.get("requires_pr", True)),
         description=(str(raw["description"]).strip() or None) if raw.get("description") else None,
+        max_auto_loops=int(raw.get("max_auto_loops", 1)),
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
     )
