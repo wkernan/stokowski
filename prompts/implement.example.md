@@ -77,6 +77,12 @@ evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
 If you were parked for context and have no PR yet, the answers are in the
 Linear comments: follow **First run** using them.
 
+If the previous stage's report (below) is a code review requesting changes,
+fix each of its next steps on the existing branch. Add commits (don't
+force-push), re-run the covering specs and then the full check once, and say
+in your report how each finding was addressed. Leave alone anything it says
+needs the owner's decision, and repeat it in `open_questions`.
+
 If this is a rework run and a branch and PR already exist:
 
 1. Find the existing PR:

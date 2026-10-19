@@ -384,6 +384,7 @@ states:
     session: fresh            # no prior context — adversarial review
     transitions:
       complete: merge-review
+      request-changes: implement   # fixable findings go straight back, once (max_auto_loops)
 
   # ── 7. Merge Review (gate) ──────────────────────────────────────────────
   # The PR is the gate and the human merges it; no agent runs `gh pr merge`.

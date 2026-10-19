@@ -46,9 +46,18 @@ the implementer missed — not to rubber-stamp the PR.
    - **Safety** — Error handling, input validation, no security issues?
    - **Tests** — Adequate coverage?  Do tests actually test the right thing?
    - **Performance** — Any obvious regressions or inefficiencies?
-6. Re-run the project's real quality suite yourself and record the actual
-   output. Use the commands the project documents (check `CLAUDE.md` for a
-   pre-PR checklist), not a generic approximation of them.
+6. **Use CI's results; don't redo them.** Run `gh pr checks` first. If every
+   check passed on the PR's current head commit, record those results in
+   `verification` and do not re-run the full suite or the linters: CI just
+   did, on a clean machine. Spend that time on what CI cannot do:
+   - **Prove the new tests catch the bug.** Break the change on purpose (revert
+     the fix, swap the condition), run only the covering specs, confirm they
+     fail, restore it.
+   - Run the covering specs for anything you suspect.
+
+   Run a full gate locally only when CI hasn't run on the head commit or a
+   check failed, and then only that gate, using the project's documented
+   command.
 7. **Audit the implementer's grounding**, from `.stokowski/report.json` if it
    survives and from the run report on the Linear issue:
    - Did they verify which data source they read, or assume it?
@@ -64,7 +73,16 @@ the implementer missed — not to rubber-stamp the PR.
    - `claims` — one per issue found, severity in the claim text, each with
      the file:line that demonstrates it
    - `verification` — the quality commands you re-ran and their real results
-   - `verdict` — exactly one of `approve`, `request-changes`, or `blocked`
+   - `verdict` — exactly one of:
+     - `approve`: safe to merge.
+     - `request-changes`: there are blocking problems an agent can fix without
+       a decision from the owner. Stokowski sends these straight back to the
+       implementer once, and then you review again, so make each `next_steps`
+       entry a precise fix.
+     - `blocked`: something needs the owner, such as a scoping question, a
+       product decision, or a risk only they can accept. Put each question
+       in `open_questions`. If there are fixable problems as well, list them in
+       `next_steps`: the owner sees both at the gate.
    - `next` — one short paragraph carrying the decision and its single most
      important reason. Rendered at the top of the Linear comment and often the
      only thing read at the gate, so it must stand alone.

@@ -82,7 +82,11 @@ def test_the_owners_answer_reaches_the_implement_prompt():
     text = prompt_for(THREAD)
     assert ANSWER in text
     assert "override your own reading of the ticket" in text
-    assert "ground-check report body XYZ" not in text   # machine comments stay out
+    # Reports never appear as human comments; the newest one from another
+    # stage is handed over once, in its own section.
+    assert text.count("ground-check report body XYZ") == 1
+    handover = text.index("The previous stage's report")
+    assert handover < text.index("ground-check report body XYZ")
 
 
 def test_earlier_decisions_still_reach_later_stages():

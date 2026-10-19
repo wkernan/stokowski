@@ -9,6 +9,7 @@ Assembles prompts from:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -153,6 +154,35 @@ def format_comment(comment: dict[str, Any]) -> list[str]:
 
 
 EARLIER_COMMENTS_BUDGET = 6000  # characters
+PREVIOUS_REPORT_BUDGET = 8000   # characters
+
+_REPORT_STATE = re.compile(r"Stokowski · state `([^`]+)`")
+
+
+def previous_stage_report(comments: list[dict[str, Any]], state_name: str) -> tuple[str, str] | None:
+    """The newest report another stage posted, as (state, body), or None.
+
+    Reports carry the machine marker, so the comment window drops them; but
+    the stage before this one is what this run continues from. An implementer
+    sent back by code review needs the review's findings, and a reviewer
+    needs to know what the implementer claims to have verified. A report from
+    this same state is skipped: it is this stage's own last word, and the
+    rework or comments above say what changed since.
+    """
+    for c in sorted(comments, key=lambda c: c.get("createdAt") or "", reverse=True):
+        body = c.get("body") or ""
+        if "<!-- stokowski:report -->" not in body:
+            continue
+        m = _REPORT_STATE.search(body)
+        state = m.group(1) if m else ""
+        if state == state_name:
+            return None
+        text = body.replace("<!-- stokowski:report -->", "").strip()
+        if len(text) > PREVIOUS_REPORT_BUDGET:
+            text = text[:PREVIOUS_REPORT_BUDGET].rstrip() + (
+                "\n\n… (truncated; the full report is linked on the issue)")
+        return state or "previous stage", text
+    return None
 
 
 def earlier_human_comments(comments: list[dict[str, Any]],
@@ -186,6 +216,7 @@ def build_lifecycle_section(
     is_rework: bool = False,
     recent_comments: list[dict[str, Any]] | None = None,
     earlier_comments: list[dict[str, Any]] | None = None,
+    previous_report: tuple[str, str] | None = None,
     checks: ChecksConfig | None = None,
 ) -> str:
     """Generate the auto-injected lifecycle section.
@@ -247,6 +278,17 @@ def build_lifecycle_section(
         lines.append("")
         for comment in recent_comments:
             lines.extend(format_comment(comment))
+
+    if previous_report:
+        state, text = previous_report
+        lines.append(f"### The previous stage's report (`{state}`)")
+        lines.append("")
+        lines.append("What the stage before you concluded. If it is a review requesting "
+                     "changes, each of its next steps is yours to fix; anything it "
+                     "says needs the owner's decision is not.")
+        lines.append("")
+        lines.extend(f"> {line}" if line else ">" for line in text.splitlines())
+        lines.append("")
 
     if earlier_comments:
         lines.append("### Earlier comments on this ticket")
@@ -312,6 +354,19 @@ def build_checks_section(checks: ChecksConfig | None) -> list[str]:
         "cores; parallel runs starve each other until they all time out.",
         "- If you set a timeout, give the full suite at least twice its usual "
         "time. A run killed by its own timeout tells you nothing.",
+        "- Keep test and lint output short: pipe through `tail` or a quiet "
+        "reporter while iterating, and read the full output only of a failure.",
+        "",
+        "### Reading economically",
+        "",
+        "Every tool result stays in your context and is re-read on every later "
+        "call, so a 50 KB read early on costs fifty times over by the end.",
+        "",
+        "- Search before you read: `grep -n` with `-m` or `| head`, then `Read` "
+        "with `offset`/`limit` around the hit. Never read a large file whole.",
+        "- Don't re-read what you already have. Note line numbers the first time.",
+        "- For broad exploration (where is X used, how does Y work), use a "
+        "subagent and keep only its summary.",
         "",
     ]
     return lines
@@ -576,6 +631,7 @@ def assemble_prompt(
         is_rework=is_rework,
         recent_comments=recent,
         earlier_comments=earlier,
+        previous_report=previous_stage_report(comments or [], state_name),
         checks=getattr(cfg, "checks", None),
     )
     parts.append(lifecycle)
