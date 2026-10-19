@@ -8,6 +8,11 @@ All notable changes to Stokowski are documented here.
 
 ### Added
 
+- **Headless runs can't use tools that wait on a person or a timer.**
+  `claude.disallowed_tools` (default: AskUserQuestion, EnterPlanMode, ScheduleWakeup,
+  Monitor, CronCreate/Delete/List) goes to `--disallowedTools`; set `[]` to allow
+  everything. On WKE-707 an agent scheduled a 5-minute wakeup to wait for its own
+  test run, with nothing else to do.
 - **Code review sends fixable findings straight back, once.** A `request-changes`
   verdict now routes code-review → implement in every shipped pipeline, and the
   ticket reaches the human gate after the re-review. Agent-to-agent verdict

@@ -127,3 +127,24 @@ def test_the_review_trusts_ci_instead_of_rerunning_it():
     text = (REPO / "prompts" / "review.example.md").read_text(encoding="utf-8")
     assert "gh pr checks" in text and "do not re-run the full suite" in text
     assert "request-changes" in text and "open_questions" in text
+
+
+# ── Headless runs don't get tools that wait on a person or a timer ──────────
+
+
+def test_headless_runs_disallow_waiting_tools_by_default():
+    from stokowski.config import ClaudeConfig
+    from stokowski.runner import build_claude_args
+
+    args = build_claude_args(ClaudeConfig(), "p", Path("."))
+    i = args.index("--disallowedTools")
+    assert {"ScheduleWakeup", "Monitor", "AskUserQuestion"} <= set(args[i + 1].split(","))
+    assert "--disallowedTools" not in build_claude_args(ClaudeConfig(disallowed_tools=[]), "p", Path("."))
+
+
+def test_disallowed_tools_parse_and_survive_the_state_merge():
+    cfg = parse_workflow_file(REPO / "workflow.example.yaml").config
+    from stokowski.config import merge_state_config
+    state = cfg.workflows["build"].states["implement"]
+    claude, _ = merge_state_config(state, cfg.claude, cfg.hooks)
+    assert "ScheduleWakeup" in claude.disallowed_tools

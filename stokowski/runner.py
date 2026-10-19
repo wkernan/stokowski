@@ -68,6 +68,9 @@ def build_claude_args(
     elif claude_cfg.permission_mode == "allowedTools" and claude_cfg.allowed_tools:
         args.extend(["--allowedTools", ",".join(claude_cfg.allowed_tools)])
 
+    if claude_cfg.disallowed_tools:
+        args.extend(["--disallowedTools", ",".join(claude_cfg.disallowed_tools)])
+
     # Model override
     if claude_cfg.model:
         args.extend(["--model", claude_cfg.model])
