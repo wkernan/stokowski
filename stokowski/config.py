@@ -74,6 +74,12 @@ class HooksConfig:
     timeout_ms: int = 60_000
 
 
+HEADLESS_DISALLOWED_TOOLS = (
+    "AskUserQuestion", "EnterPlanMode", "ScheduleWakeup", "Monitor",
+    "CronCreate", "CronDelete", "CronList",
+)
+
+
 @dataclass
 class ClaudeConfig:
     command: str = "claude"
@@ -97,6 +103,11 @@ class ClaudeConfig:
     # Comma-separated models to fall back to when the primary is overloaded or
     # unavailable (`--fallback-model`) — useful when a run hits a rate limit.
     fallback_model: str | None = None
+    # Tools a headless run must not have (`--disallowedTools`). Nobody answers
+    # a question or approves a plan, and a timer or background watcher just
+    # parks the run: on WKE-707 an agent called ScheduleWakeup to wait 5 minutes
+    # for its own test run, with nothing else to do. Set [] to allow them all.
+    disallowed_tools: list[str] = field(default_factory=lambda: list(HEADLESS_DISALLOWED_TOOLS))
 
 
 @dataclass
@@ -652,6 +663,7 @@ def merge_state_config(
         turn_timeout_ms=state.turn_timeout_ms if state.turn_timeout_ms is not None else root_claude.turn_timeout_ms,
         stall_timeout_ms=state.stall_timeout_ms if state.stall_timeout_ms is not None else root_claude.stall_timeout_ms,
         append_system_prompt=root_claude.append_system_prompt,
+        disallowed_tools=root_claude.disallowed_tools,
     )
     hooks = state.hooks if state.hooks is not None else root_hooks
     return claude, hooks
@@ -701,6 +713,10 @@ def _parse_claude(raw: dict[str, Any]) -> ClaudeConfig:
         turn_timeout_ms=_coerce_int(raw.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(raw.get("stall_timeout_ms"), 300_000),
         append_system_prompt=raw.get("append_system_prompt"),
+        disallowed_tools=(
+            _coerce_list(raw["disallowed_tools"]) if raw.get("disallowed_tools") is not None
+            else list(HEADLESS_DISALLOWED_TOOLS)
+        ),
     )
 
 
