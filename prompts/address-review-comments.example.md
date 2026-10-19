@@ -8,6 +8,11 @@ You are responding to human review feedback on the pull request for
 A reviewer commented on your PR and the ticket came back to you. The branch
 and the PR already exist; you are continuing them, not starting over.
 
+This stage starts in a fresh session. `git log --oneline origin/main..HEAD`
+and `git diff --stat origin/main...HEAD` show what the branch already holds;
+read only the files the feedback names. Do not run a review skill, and do not
+wait for CI after pushing: the next stage reads it.
+
 ## Find the feedback
 
 1. Locate the PR for this branch:

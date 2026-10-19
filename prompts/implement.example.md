@@ -51,8 +51,9 @@ evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
 5. Run the project's real quality suite — the exact commands it documents,
    not a generic approximation. Check `CLAUDE.md` for the pre-PR checklist.
 6. Fix any failures before proceeding.
-7. Review your own diff, and run the project's review command if it has one
-   (e.g. `/review-changes`) — slash commands work in this environment.
+7. Review your own diff. Do not run a review skill or command
+   (`/code-review`, `/review-changes`): the `code-review` stage after you does
+   that in a fresh session, and running it here pays for the same review twice.
 8. Capture before/after screenshots into `$STOKOWSKI_ARTIFACTS` for anything
    visible to a user.
 9. Push the branch and create a PR:
@@ -60,7 +61,9 @@ evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
    git push -u origin HEAD
    gh pr create --title "{{ issue.identifier }}: <concise title>" --body "<description>"
    ```
-10. Link the PR to the Linear issue.
+10. Link the PR to the Linear issue. Do not wait for CI: once the PR is pushed,
+    finish your report and end the stage. The review stage reads CI; a sleep
+    loop on `gh pr checks` only holds the stage open.
 11. Write `.stokowski/report.json`: what changed and why, the exact
     verification commands and their real results, assumptions, and known
     limitations. Set `verdict` to `complete` (or `blocked`; `needs-context` is
@@ -76,6 +79,10 @@ evidence for each doubt in `claims`. Stokowski parks the ticket and asks.
 
 If you were parked for context and have no PR yet, the answers are in the
 Linear comments: follow **First run** using them.
+
+Rework runs start in a fresh session. Orient from the branch, not from memory:
+`git log --oneline origin/main..HEAD` and `git diff --stat origin/main...HEAD`
+show what earlier runs built, and the PR body says what they claimed.
 
 If the previous stage's report (below) is a code review requesting changes,
 fix each of its next steps on the existing branch. Add commits (don't
