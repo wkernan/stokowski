@@ -12,7 +12,7 @@ Event shapes (verified against Claude Code, not inferred):
     {"type":"rate_limit_event","rate_limit_info":{"rateLimitType":"five_hour",...}}
     {"type":"result","subtype":"success","usage":{...},"total_cost_usd":...}
 
-Note there is NO top-level "tool_use" event — tool calls arrive as content
+Note there is NO top-level "tool_use" event â€” tool calls arrive as content
 blocks inside `assistant` messages, and their outcomes as `tool_result` blocks
 inside `user` messages. Parsing for a top-level event yields a permanently
 idle-looking dashboard.
@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from .model_catalogue import estimate_cost_usd
 from .models import ActivityEntry, RunAttempt
 
 logger = logging.getLogger("stokowski.events")
@@ -77,7 +78,7 @@ def summarise_tool_input(name: str, tool_input: Any) -> str:
             return value.strip()[:_MAX_DETAIL]
 
     if name in _TOOL_DETAIL_FIELDS:
-        # Known tool with no useful field (e.g. TodoWrite) — stay quiet.
+        # Known tool with no useful field (e.g. TodoWrite) â€” stay quiet.
         return ""
 
     # Unknown tool (MCP servers, custom tools): show the first short string.
@@ -109,7 +110,7 @@ def _record(attempt: RunAttempt, kind: str, label: str, detail: str = "", status
     elif kind in ("text", "result"):
         attempt.last_message = detail[:200]
     elif kind == "thinking":
-        attempt.last_message = f"thinking… {detail[:160]}" if detail else "thinking…"
+        attempt.last_message = f"thinkingâ€¦ {detail[:160]}" if detail else "thinkingâ€¦"
 
 
 def _accumulate_usage(attempt: RunAttempt, usage: dict) -> None:
@@ -140,6 +141,106 @@ def _accumulate_usage(attempt: RunAttempt, usage: dict) -> None:
         thinking = details.get("thinking_tokens", 0)
         if isinstance(thinking, int):
             attempt.thinking_tokens += thinking
+
+
+def _int_field(usage: dict, key: str) -> int:
+    value = usage.get(key, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _sync_totals(attempt: RunAttempt) -> None:
+    attempt.total_tokens = (
+        attempt.input_tokens
+        + attempt.output_tokens
+        + attempt.cache_creation_tokens
+        + attempt.cache_read_tokens
+    )
+
+
+def _committed_cost(attempt: RunAttempt) -> float:
+    """This attempt's spend as of the last `result` event (zero before any)."""
+    if attempt.cost_usd_reported > 0:
+        return max(0.0, attempt.cost_usd_reported - attempt.session_cost_baseline)
+    return 0.0
+
+
+def _refresh_live_cost(attempt: RunAttempt) -> None:
+    """cost_usd = what the last result reported + the in-flight estimate."""
+    estimate = sum(m["cost"] for m in attempt.live_messages.values())
+    attempt.cost_usd = _committed_cost(attempt) + estimate
+    attempt.cost_estimated = estimate > 0
+
+
+def _accumulate_live_usage(attempt: RunAttempt, message: dict, event: dict) -> None:
+    """Fold an assistant message's `usage` into the attempt while the turn runs.
+
+    Without this the token and cost fields stay at zero until the `result`
+    event at the very end of the invocation: a runaway stage is invisible, and
+    one that is stopped before it finishes reports nothing at all.
+
+    Measured on a real capture (`tests/fixtures/real_turn.ndjson`):
+
+    - Claude Code emits one `assistant` event per content block, and blocks of
+      the same API message repeat the same `message.id` and `usage`. Counting
+      events would double-count; count each message id once.
+    - Summed over distinct messages, input / cache-creation / cache-read match
+      the `result` totals exactly. `output_tokens` does not: assistant events
+      carry the figure at the start of the message (8 and 1 against 150 in the
+      result), so the live output count is a floor that jumps to the real value
+      when the result arrives.
+    """
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return
+    key = message.get("id") or event.get("uuid")
+    if not isinstance(key, str) or not key:
+        return
+
+    fresh = {
+        "input": _int_field(usage, "input_tokens"),
+        "output": _int_field(usage, "output_tokens"),
+        "cache_creation": _int_field(usage, "cache_creation_input_tokens"),
+        "cache_read": _int_field(usage, "cache_read_input_tokens"),
+    }
+    creation = usage.get("cache_creation")
+    one_hour = _int_field(creation, "ephemeral_1h_input_tokens") if isinstance(creation, dict) else 0
+
+    prior = attempt.live_messages.get(key)
+    if prior is None:
+        prior = {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "cost": 0.0}
+        attempt.live_messages[key] = prior
+
+    # A repeat of a message id may refine its usage (output grows as it
+    # streams); never let it shrink what was already counted.
+    current = {name: max(prior[name], fresh[name]) for name in fresh}
+    attempt.input_tokens += current["input"] - prior["input"]
+    attempt.output_tokens += current["output"] - prior["output"]
+    attempt.cache_creation_tokens += current["cache_creation"] - prior["cache_creation"]
+    attempt.cache_read_tokens += current["cache_read"] - prior["cache_read"]
+    one_hour = min(one_hour, current["cache_creation"])
+    cost = estimate_cost_usd(
+        message.get("model") or attempt.model,
+        input_tokens=current["input"],
+        output_tokens=current["output"],
+        cache_write_5m_tokens=current["cache_creation"] - one_hour,
+        cache_write_1h_tokens=one_hour,
+        cache_read_tokens=current["cache_read"],
+    )
+    prior.update(current)
+    prior["cost"] = cost or 0.0
+    _sync_totals(attempt)
+    _refresh_live_cost(attempt)
+
+
+def _discard_live_usage(attempt: RunAttempt) -> None:
+    """Back the in-flight estimate out; the result event is about to replace it."""
+    for m in attempt.live_messages.values():
+        attempt.input_tokens -= m["input"]
+        attempt.output_tokens -= m["output"]
+        attempt.cache_creation_tokens -= m["cache_creation"]
+        attempt.cache_read_tokens -= m["cache_read"]
+    attempt.live_messages.clear()
+    _sync_totals(attempt)
 
 
 def _accumulate_model_usage(attempt: RunAttempt, model_usage: dict) -> None:
@@ -192,7 +293,7 @@ def _handle_system(event: dict, attempt: RunAttempt) -> None:
 
     if subtype == "init":
         # Capture the session id up front. The result event carries it too, but
-        # a turn that stalls or times out never produces one — and without it
+        # a turn that stalls or times out never produces one â€” and without it
         # the next attempt cannot --resume and restarts from scratch.
         session_id = event.get("session_id")
         if session_id:
@@ -209,6 +310,7 @@ def _handle_system(event: dict, attempt: RunAttempt) -> None:
 
 def _handle_assistant(event: dict, attempt: RunAttempt) -> None:
     message = event.get("message") or {}
+    _accumulate_live_usage(attempt, message, event)
     content = message.get("content")
 
     if isinstance(content, str):
@@ -291,7 +393,7 @@ def _handle_rate_limit(event: dict, attempt: RunAttempt) -> None:
         "using_overage": info.get("isUsingOverage"),
     }
 
-    # Only surface non-nominal states — "allowed" fires constantly and would
+    # Only surface non-nominal states â€” "allowed" fires constantly and would
     # drown the activity trail.
     if info.get("status") and info.get("status") != "allowed":
         _record(
@@ -307,6 +409,10 @@ def _handle_result(event: dict, attempt: RunAttempt) -> None:
     session_id = event.get("session_id")
     if session_id:
         attempt.session_id = session_id
+
+    # The result is authoritative for this invocation: drop the live estimate
+    # first so its tokens are not counted twice.
+    _discard_live_usage(attempt)
 
     usage = event.get("usage")
     if isinstance(usage, dict):
@@ -325,6 +431,10 @@ def _handle_result(event: dict, attempt: RunAttempt) -> None:
     if isinstance(cost, (int, float)):
         attempt.cost_usd_reported = float(cost)
         attempt.cost_usd = max(0.0, attempt.cost_usd_reported - attempt.session_cost_baseline)
+        attempt.cost_estimated = False
+    else:
+        # A result without a cost figure: keep the committed spend, drop the estimate.
+        _refresh_live_cost(attempt)
 
     for field, key in (("duration_ms", "duration_ms"), ("duration_api_ms", "duration_api_ms")):
         value = event.get(key)

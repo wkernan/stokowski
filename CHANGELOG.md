@@ -17,8 +17,33 @@ All notable changes to Stokowski are documented here.
   runs a review skill (the `code-review` stage does, fresh) and no longer waits
   on CI after pushing (the review stage reads CI); on WKE-713 it did both before
   being told not to.
+- **A running stage shows its tokens and cost, and a stopped stage keeps its
+  spend.** Both were read from the final `result` event, so a stage's `tokens`
+  stayed 0 and `cost_usd` 0.0 until it ended (WKE-713: 18,013,551 tokens and
+  $5.66 visible only in the report footer), and a stage cancelled before it
+  finished (the issue moved to Human Review) recorded nothing. Now:
+  - Usage from each `assistant` message is added as events arrive, counting each
+    API message id once (Claude Code emits one event per content block, all with
+    the same usage). Input and cache tokens match the `result` exactly; the
+    assistant event's `output_tokens` is the figure at the start of the message,
+    so live output is a floor.
+  - A running cost estimate is priced from the new `PRICES_PER_MTOK` table in
+    `model_catalogue.py` (1h cache writes 2x, 5m 1.25x, reads 0.1x; reproduces
+    the real capture's reported cost to the cent). A model not in the table gets
+    tokens but no estimate. The `result` event's `total_cost_usd` stays
+    authoritative: it replaces the estimate, and the resumed-session baseline
+    still applies. `/api/v1` running rows carry `cost_estimated` while the
+    figure is an estimate.
+  - A cancelled stage (and one killed by a stall or turn timeout with no report)
+    writes a ledger stage entry with `"stopped": true`, its tokens and estimated
+    cost, and `"cost_estimated": true`; the totals already include it. The ledger
+    summary gains `stopped_stages` and `stopped_cost_usd`, and stopped stages no
+    longer count as `stages_without_report`.
 
 ### Fixed
+
+- **Cancelling a worker now kills its `claude` process.** Cancelling the task
+  left the child running (and spending) with Stokowski no longer watching it.
 
 - **An issue moved to Rework by hand now resumes.** An operator who stopped a
   running stage by moving the ticket to Human Review, then to Rework, got

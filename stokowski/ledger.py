@@ -78,7 +78,17 @@ class Ledger:
         artifacts: int,
         model: str | None,
         duration_s: float | None,
+        stopped: bool = False,
+        cost_estimated: bool = False,
     ) -> None:
+        """Append one stage's outcome.
+
+        `stopped` marks a stage that was cut off before it finished (cancelled
+        because the issue moved on, or killed by a stall or timeout) and so
+        never produced a report. Its `tokens` and `cost_usd` are what it had
+        spent when it stopped; `cost_estimated` says that cost came from the
+        stream's usage and the price table, not from a `result` event.
+        """
         claims = report.get("claims") if isinstance(report, dict) else None
         claims = claims if isinstance(claims, list) else []
 
@@ -114,6 +124,8 @@ class Ledger:
             "artifacts": artifacts,
             "model": model,
             "duration_s": round(duration_s, 1) if duration_s is not None else None,
+            "stopped": stopped,
+            "cost_estimated": cost_estimated,
         })
 
     def record_gate(
@@ -216,7 +228,15 @@ class Ledger:
             "total_cost_usd": round(sum(s.get("cost_usd") or 0 for s in stages), 2),
             "total_tokens": sum(s.get("tokens") or 0 for s in stages),
             "cost_per_stage": round(sum(s.get("cost_usd") or 0 for s in costed) / len(costed), 3) if costed else None,
-            "stages_without_report": sum(1 for s in stages if not s.get("has_report")),
+            # A stopped stage has no report by construction; counting it here
+            # would bury the stages that finished and still wrote none.
+            "stages_without_report": sum(
+                1 for s in stages if not s.get("has_report") and not s.get("stopped")
+            ),
+            "stopped_stages": sum(1 for s in stages if s.get("stopped")),
+            "stopped_cost_usd": round(
+                sum(s.get("cost_usd") or 0 for s in stages if s.get("stopped")), 2
+            ),
             "unsourced_claims": sum(s.get("unsourced_claims") or 0 for s in stages),
             "by_classification": {k: rate(v) for k, v in sorted(by_class.items())},
             "by_confidence": {k: rate(v) for k, v in sorted(by_confidence.items())},

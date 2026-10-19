@@ -1450,6 +1450,7 @@ class Orchestrator:
             issue_identifier=issue.identifier,
             attempt=attempt_num,
             state_name=state_name,
+            run=self._issue_state_runs.get(issue.id, 1),
         )
         attempt.on_activity = self.activity_log.sink(
             issue, attempt,
@@ -1648,6 +1649,7 @@ class Orchestrator:
         except asyncio.CancelledError:
             logger.info(f"Worker cancelled issue={issue.identifier}", extra={"linked_to": issue.identifier})
             attempt.status = "canceled"
+            self._record_stopped_stage(issue, attempt)
             self._on_worker_exit(issue, attempt)
         except Exception as e:
             logger.error(f"Worker error issue={issue.identifier}: {e}", extra={"linked_to": issue.identifier})
@@ -1822,7 +1824,11 @@ class Orchestrator:
 
         if report is None and not uploaded and attempt.status != "succeeded":
             # A run that failed with nothing to show gets the normal retry
-            # machinery rather than a comment saying so on every attempt.
+            # machinery rather than a comment saying so on every attempt. What
+            # a stall or timeout had spent before it was killed is still
+            # spend, so it goes in the ledger even though nothing is posted.
+            if attempt.status in ("stalled", "timed_out"):
+                self._record_stopped_stage(issue, attempt)
             return
 
         usage = {
@@ -1880,6 +1886,7 @@ class Orchestrator:
             model=attempt.model,
             duration_s=duration,
         )
+        attempt.ledger_recorded = True
 
         posted = await client.post_comment(issue.id, body)
         if posted:
@@ -2001,6 +2008,47 @@ class Orchestrator:
             result_text = event.get("result", "")
             if isinstance(result_text, str) and result_text:
                 logger.info(f"[{identifier}] result: {result_text[:160]}", extra=extra)
+
+    def _record_stopped_stage(self, issue: Issue, attempt: RunAttempt) -> None:
+        """Ledger entry for a stage that was cut off before it could report.
+
+        A stage cancelled mid-run (the issue moved to a gate or went terminal)
+        or killed by the stall or turn timeout never reaches the report path,
+        so without this its spend appears nowhere. The tokens come from the
+        stream's `assistant` usage and the cost is an estimate, flagged as such
+        (`RunAttempt.cost_estimated`). Never allowed to break the worker exit.
+        """
+        if attempt.ledger_recorded or (not attempt.total_tokens and not attempt.cost_usd):
+            return
+        try:
+            duration = None
+            if attempt.started_at:
+                duration = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
+            self.ledger.record_stage(
+                workflow=self._workflow_name_for(issue),
+                project=self.project_name or "",
+                issue_id=issue.id,
+                issue=issue.identifier,
+                title=issue.title,
+                state=attempt.state_name or "run",
+                run=attempt.run,
+                status=attempt.status,
+                report=None,
+                tokens=attempt.total_tokens,
+                cost_usd=attempt.cost_usd,
+                tool_calls=attempt.tool_call_count,
+                tool_errors=attempt.tool_error_count,
+                artifacts=0,
+                model=attempt.model,
+                duration_s=duration,
+                stopped=True,
+                cost_estimated=attempt.cost_estimated,
+            )
+            attempt.ledger_recorded = True
+        except Exception as e:
+            logger.warning(
+                f"Could not record stopped stage: {e}", extra={"linked_to": issue.identifier}
+            )
 
     def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
@@ -2301,6 +2349,7 @@ class Orchestrator:
                         "total_tokens": r.total_tokens,
                     },
                     "cost_usd": round(r.cost_usd, 4),
+                    "cost_estimated": r.cost_estimated,
                     "model": r.model,
                     "state_name": r.state_name,
                     "tool_call_count": r.tool_call_count,
