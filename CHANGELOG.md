@@ -6,6 +6,18 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Follow-up build stages start fresh, and implement stops doing the reviewer's
+  job.** In the build pipeline `implement` and `address-review-comments` now run
+  with `session: fresh`: resuming the implementer's session re-sent the whole
+  earlier conversation on every tool call (WKE-713: a rework at 37.7M tokens / $9.00,
+  four small review fixes at 27.0M / $5.89). Both prompts tell a fresh run to
+  orient from `git log` / `git diff` against `origin/main`. `implement` no longer
+  runs a review skill (the `code-review` stage does, fresh) and no longer waits
+  on CI after pushing (the review stage reads CI); on WKE-713 it did both before
+  being told not to.
+
 ### Fixed
 
 - **Agents now see the ticket's title and description.** Every stage prompt reads

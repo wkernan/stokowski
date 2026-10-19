@@ -30,7 +30,10 @@ states:
     linear_state: active
     model: claude-sonnet-5
     effort: high
-    session: inherit
+    # Fresh, not inherit: a rework run resumed the whole earlier conversation and
+    # re-sent it on every tool call (WKE-713: 37.7M tokens for one rework). The
+    # branch, the PR and the previous stage's report carry everything it needs.
+    session: fresh
     transitions:
       complete: code-review
       needs-context: needs-context     # the ticket cannot be built as written
@@ -75,7 +78,9 @@ states:
     linear_state: active
     model: claude-sonnet-5
     effort: high
-    session: inherit
+    # Fresh: four small review fixes on WKE-713 cost $5.89 / 27.0M tokens when
+    # this stage inherited the implementer's session.
+    session: fresh
     transitions:
       complete: merge-review
 

@@ -80,11 +80,19 @@ def test_an_exit_into_a_gate_is_never_capped(tmp_path):
     assert exits(o, "implement", ["needs-context"] * 3) == ["needs-context"] * 3
 
 
-def test_the_implementer_resumes_its_own_session_not_the_reviewers(tmp_path):
+def test_the_build_pipeline_never_resumes_a_session(tmp_path):
+    """implement and address-review-comments run fresh, like the reviewer.
+
+    Resuming the implementer's session re-sent the whole earlier conversation
+    on every tool call: on WKE-713 a rework cost 37.7M tokens and four small
+    review fixes $5.89. The branch, the PR and the previous stage's report are
+    what a follow-up stage needs, so no build stage is ever resumed, and the
+    reviewer's session is never one a later stage picks up either.
+    """
     o = orchestrator(tmp_path)
     exits(o, "implement", ["complete"], session_id="impl")
     exits(o, "code-review", ["request-changes"], session_id="rev")
-    assert o._last_session_ids["i"] == "impl"
+    assert "i" not in o._last_session_ids
 
 
 REVIEW = ("<!-- stokowski:report -->\n\n## code-review — fires on four states\n\n"
